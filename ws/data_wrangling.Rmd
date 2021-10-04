@@ -114,7 +114,7 @@ load(file='../data/manipulationDatasets.RData')
 dat.1 %>% head
 ```
 
-str() used on any object. Tells you what the data are considered as. Is it what you expect? Could have a numeric column that is character because of a stray letter.
+`str()` used on any object. Tells you what the data are considered as. Is it what you expect? Could have a numeric column that is character because of a stray letter.
 
 ```{r checking data}
 str(dat.1)
@@ -145,6 +145,7 @@ dat.1 %>% as_tibble() %>% print
 ```
 
 **Tibbles:**
+
 * Print to fit on the consol 'page.'
 * Rounds numbers for display, actual data has not been changed.
 * Can put anything you like in a cell (instructions for a plot, a tibble) vs 1 number/factor in a dataframe.
@@ -269,7 +270,27 @@ dat.1 %>% mutate(leadResp2 = lead(Resp2), # shift up one
                  lagResp2 = lag(Resp2)) # shift down one
 ```
 
-# Ranking - see slides
+# Ranking 
+
+```{r ranking}
+dat.1 %>% mutate(rankTime = min_rank(Time), # ties.method = 'min'
+                 denseRankTime = dense_rank(Time)) # like min_rank but no gaps between ranks
+```
+
+Rank orders
+
+```{r rank orders}
+dat.1 %>% mutate(rowresp1 = row_number(Resp1), # ties.method = 'first'
+                 rowTime = row_number(Time),
+                  rankTime = min_rank(Time))
+```
+
+Rank of bins:
+
+```{r rank bins}
+dat.1 %>% mutate(ntile(Resp1, 4)) # rough rank, breaks input vector into n buckets
+```
+
 
 # Window functions
 
@@ -285,11 +306,11 @@ dat.1 %>% mutate(between(Resp1, 20, 40)) # binary 0, 1 as T/F
 
 `case_when()` avoids nesting, easier to follow, and neater.
 
-```{r}
+```{r case when}
 dat.1 %>% mutate(fResp1 = ifelse(Resp1 < 30, 'Low',
                           ifelse(between(Resp1, 31, 50), 'Medium', 'High')))
 # OR
-dat.1 %>% mutate(fResp1 = case_when(Resp < 31 ~ 'Low',
+dat.1 %>% mutate(fResp1 = case_when(Resp1 < 31 ~ 'Low',
                           between(Resp1, 31, 50) ~ 'Medium',
                           Resp1 > 50 ~ 'High'))
 ```
@@ -337,7 +358,7 @@ dat.1 %>% summarize(MeanResp1 = mean(Resp1),
                     SEM = SE(Resp1))
 ```
 
-#`across()` versions of `summarize()`
+#across() versions of summarize()
 
 ```{r summarize mean using across}
 dat.1 %>%  summarize(across(c(Resp1, Resp2),
@@ -429,11 +450,16 @@ tikus %>%
 
 str(tikus)
 # Does not work - can't use across with group_by?
-# tikus %>% 
-#   as_tibble() %>% 
-#   group_by(time) %>% 
-#   summarize(across(`Pocillopora damicornis`), 
-#             list(Mean = mean))
+# tikus %>%
+#   as_tibble() %>%
+#   group_by(time) %>%
+#   summarize(across(`Pocillopora damicornis`),
+#             list(Mean = mean),
+#             .groups = 'keep')
+
+iris %>%
+  group_by(Species) %>%
+  summarise(across(starts_with("Sepal"), list(mean = mean, sd = sd)))
 ```
 
 Subset columns
@@ -488,7 +514,7 @@ Murray is not a fan because it relies on the order of the columns.
 
 With nasa data, select out lat, long, and all columns that have cloud in them.
 
-```{r}
+```{r nasa example}
 head(nasa)
 nasa %>% 
   select(lat, long, contains('cloud'))
@@ -505,10 +531,11 @@ nasa %>%
 
 From tikus, select rep, time, and only species that don't contain pora.
 
-```{r}
+```{r tikus select}
 tikus %>% 
   select(rep, time, -contains('pora'))
 # OR
+tikus %>% 
   select(rep, time, everything(), -contains('pora'))
 ```
 
@@ -545,7 +572,7 @@ dat.1 %>% filter(Dose == 'H')
 dat.1 %>% filter(Dose == 'H' | Dose == 'M') %>%  # H OR M
   head()
 # OR
-dat.1 %>% filter(Does %in% c('H', 'M')) %>% 
+dat.1 %>% filter(Dose %in% c('H', 'M')) %>% 
   head()
 ```
 
@@ -596,12 +623,80 @@ dat.3 %>%  pull(Plot) # only P1 level
 Reshaping data
 =================
 
+Wide data is easier to read for humans and more space efficient.
+
 ## Pivot longer
+
+```{r pivot longer}
+data.w %>% pivot_longer(Time.0:Time.2, 
+                        names_to = 'Time', # makes up if not supplied
+                        values_to = 'Count')
+# OR
+data.w %>% pivot_longer(c(-Between, -Plot), 
+                        names_to = 'Time',
+                        values_to = 'Count')
+# OR
+data.w %>% pivot_longer(starts_with('Time'), 
+                        names_to = 'Time',
+                        values_to = 'Count',
+                        names_prefix = 'Time.')
+```
 
 ## Pivot wider
 
+```{r head data}
+data %>% head(2)
+```
+
+Data has two response variables (Resp1, Resp2). Want to turn longish data wider into columns with B1 and B2. Only interested in Resp1 here.
+
+```{r pivot wider without Resp2}
+data %>% select(-Resp2) %>% 
+  pivot_wider(names_from = Within, values_from = c(Resp1))
+```
+
+```{r pivot wider with both Resp1, Resp2}
+data %>% 
+  pivot_wider(names_from = Within, values_from = c(Resp1, Resp2))
+```
+
 Combining data
 =================
+
+Combine ecological with environmental data, for example.
+
+Three ways to join data. Terminology comes from databases.
+
+1. `left_join()` - keeps everything on the left dataframe and as much of right dataframe that matches. Also a `right_join()` for piping convenience.
+2. `inner_join()` - only matches what is common to both.
+3. `full_join()` - keeps everything from each dataframe. Safest don't lose anything.
+
+Good to get rid of superfluous columns before joining. Good practice to rename 'join' column to match. Can use select:
+
+`data %>% left_join(other.data %>%  select(X = A, Var))`
+
+Also an `anti_join()` to see what does not match.
+
+```{r look at data to join}
+data.bio %>% head()
+data.chem %>% head()
+```
+
+```{r join bio and chem data}
+data.bio %>% inner_join(data.chem)
+
+data.bio %>% anti_join(data.chem) # shows physio chem data Subplot is missing S7
+
+data.bio %>% full_join(data.chem)
+
+data.bio %>% left_join(data.chem) # no S3 row, no chem data for S7
+```
+
+Can change order of rows - pipe to arrange.
+
+> Merge is not as efficient and does not work as well with tidyverse ecosystem.
+
+> aresenal package to compare dataframes 'compare df'
 
 Applied examples
 ===================
