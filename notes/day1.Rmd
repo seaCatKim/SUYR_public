@@ -36,7 +36,6 @@ here::here()
   * Staging Area
   * Local Repository 
     ** keeps track of parent file and differences
-    `r knitr::include_graphics(here("./pictures/git_spaces.png"))`
 
 Files can be in one of four states:
   1. untracked 
@@ -140,10 +139,19 @@ Create a new branch for some experimental coding.
 |   |-01_loadData.Rmd
 |   |-...
 
-```{r echo=FALSE}
-```
-
-### Reproducibility
+### Reproducibile Research
 
 1. Version control code
 2. Pre-registering intentions
+
+#### Documentation
+
+How to transmit analyses to other people?
+
+Need a general language to transfer to other products, passable to anything.
+
+#### Markdown
+Low level language. 
+Metadata header within '---' fences.
+
+Run markdown through a universal converter *pandoc*. Can convert to other documents - .docx, .html, .tex, etc. Pdf requires latex document preparation system.
