@@ -690,6 +690,8 @@ data.bio %>% anti_join(data.chem) # shows physio chem data Subplot is missing S7
 data.bio %>% full_join(data.chem)
 
 data.bio %>% left_join(data.chem) # no S3 row, no chem data for S7
+
+data.bio %>% right_join(data.chem) 
 ```
 
 Can change order of rows - pipe to arrange.
@@ -698,5 +700,78 @@ Can change order of rows - pipe to arrange.
 
 > aresenal package to compare dataframes 'compare df'
 
+## vLOOKUP - common reason to join
+
+Have biological data and have geographical data (lat/long) stored separately.
+
+Common to do as left join as you are matching the data you have to geographical data that might be larger than your dataset.
+
+```{r join biological and geographical data}
+data.bio %>% head(2)
+data.geo %>% head(2)
+
+data.bio %>% left_join(data.geo) # both have Plot
+```
+
 Applied examples
 ===================
+
+Tikus Island coral data.
+
+Explore/Process the data.
+
+Mean cover of total Acropora per year (NOTE: typo 'Acropera')
+
+Steps:
+
+1. Fix typo
+2. Pivot to longer - much easier to sum columns than rows.
+3. Convert abundance (length in cm of a 10m transect containing the species)
+  + Cover = Abundance / 1000 (proportions)
+  + Cover = Cover x 100 (%)
+  + so Cover = Abundance / 10
+4. Isolate genera
+5. Filter to Acropora
+6. Summ all Acropora per year, site
+7. Summarize per year
+
+```{r tikus example Acropora}
+tikus %>%
+  rename(`Acropora aspera` = `Acropera aspera`) %>% # fixed typo
+  pivot_longer(cols = -c(time, rep),
+               names_to = 'Taxa',
+               values_to = 'Abundance') %>% # species to one column
+  mutate(Cover = Abundance / 10) %>% 
+  separate(col = Taxa, into = c('Genus', 'species'), sep = " ") %>% # will try different common separators but can define with sep
+  filter(Genus == 'Acropora') %>% 
+  group_by(time, rep) %>% 
+  summarize(sum_cover = sum(Cover)) %>% 
+ # filter(sum_cover > 100) # check no sums over 100
+  group_by(time) %>% 
+  summarize(mean_cover = mean(sum_cover),
+            Var = var(sum_cover),
+            StE = SE(sum_cover)) %>% 
+  ungroup() -> tikus_sum
+```
+
+What's the cover of each of the genera?
+
+```{r tikus example}
+tikus %>%
+  rename(`Acropora aspera` = `Acropera aspera`) %>% # fixed typo
+  pivot_longer(cols = -c(time, rep),
+               names_to = 'Taxa',
+               values_to = 'Abundance') %>% # species to one column
+  mutate(Cover = Abundance / 10) %>% 
+  separate(col = Taxa, into = c('Genus', 'species'), sep = " ") %>% # will try different common separators but can define with sep
+  group_by(time, rep, Genus) %>% 
+  summarize(sum_cover = sum(Cover)) %>% 
+ # filter(sum_cover > 100) # check no sums over 100
+  group_by(time, Genus) %>% 
+  summarize(mean_cover = mean(sum_cover),
+            Var = var(sum_cover),
+            StE = SE(sum_cover)) %>% 
+  ungroup() %>% 
+  top_n(3, mean_cover) %>% # could look at top 3 dominant corals
+  arrange(-mean_cover)
+```
