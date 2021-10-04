@@ -273,13 +273,13 @@ dat.1 %>% mutate(leadResp2 = lead(Resp2), # shift up one
 
 # Window functions
 
-Logical bins: Resp1 between 20 and 40.
+## Logical bins: Resp1 between 20 and 40.
 
 ```{r Resp1 between 20 and 40}
 dat.1 %>% mutate(between(Resp1, 20, 40)) # binary 0, 1 as T/F
 ```
 
-Categorical bins:
+## Categorical bins:
 
 `ifelse()` condition when TRUE and condition when FALSE - nested `ifelse()` can be harder to follow.
 
@@ -290,8 +290,8 @@ dat.1 %>% mutate(fResp1 = ifelse(Resp1 < 30, 'Low',
                           ifelse(between(Resp1, 31, 50), 'Medium', 'High')))
 # OR
 dat.1 %>% mutate(fResp1 = case_when(Resp < 31 ~ 'Low',
-                          between(Resp1, 31, 50 ~ 'Medium',
-                          Resp1 > 50 ~ 'High')))
+                          between(Resp1, 31, 50) ~ 'Medium',
+                          Resp1 > 50 ~ 'High'))
 ```
 
 ```{r categories with cut}
@@ -315,20 +315,283 @@ dat.1 %>% mutate(Period = cut(Time, breaks = c(0, 2.5, 4.5), labels = c('Start',
 Summarising (aggregating) data
 =================================
 
+Summarize data ends up as one row.
+
+```{r summarize mean, variance, N}
+dat.1 %>% summarize(MeanResp1 = mean(Resp1),
+                VarResp1 = var(Resp1),
+                N = n()) # only works inside tidyverse functions
+```
+
+Don't say anything about other columns (Treatment, Plot, Dose, Time) and are not included in aggregated output.
+
+Can write own functions to summarize by.
+
+```{r create SE function and summarize}
+SE <- function(x) sd(x) / sqrt(length(x))
+SE(1:5) # test function
+SE(c(1,2,3,4,5,6,7,4,2,4,56,87,3,13,3))
+
+dat.1 %>% summarize(MeanResp1 = mean(Resp1),
+                    VarResp1 = var(Resp1),
+                    SEM = SE(Resp1))
+```
+
+#`across()` versions of `summarize()`
+
+```{r summarize mean using across}
+dat.1 %>%  summarize(across(c(Resp1, Resp2),
+                            mean))
+```
+
+```{r multiple functions}
+dat.1 %>%  summarize(across(c(Resp1, Resp2),
+                            list(mean, var))) # column names not useful
+
+dat.1 %>%  summarize(across(c(Resp1, Resp2),
+                            list(Mean = mean,
+                                 Var = var))) # define column names
+```
+
+Can use `across()` by data types:
+
+```{r using data types}
+dat.1 %>% summarize(across(where(is.numeric), 
+                                 list(Mean = mean,
+                                      Var = var)))
+```
+
+Can treat summarize different data types simultaneously.
+
+```{r is.numeric and is.factor}
+dat.1 %>% summarize(across(where(is.numeric), mean),
+                    across(where(is.factor), length))
+```
+
+Can pre-define variables of interest for `summarize()` and use `all_of()`.
+
+```{r predefined variables}
+Var <- c('Resp1', 'Resp2')
+dat.1 %>% summarize(across(all_of(Var),
+                           list(Mean = mean,
+                                Var = var)))
+```
+
+`count()` examples.
+
+```{r count}
+dat.1 %>% count(Dose)
+dat.1 %>% count(Dose, between(Resp1, 30, 50))
+```
 
 Grouping (=aggregating)
 =========================
 
+Summarize based on a variable(s).
+
+**Critical** to remember to `ungroup()`. Anything do after will be grouped. 
+
+```{r group_by Treatment and Plot}
+dat.1 %>%  group_by(Treatment, Plot) %>% 
+  summarize(Mean = mean(Resp1)) %>% 
+  ungroup()
+```
+
+```{r summarize dat.1}
+dat.1 %>% 
+  group_by(Treatment, Plot) %>% 
+  summarise(Mean = mean(Resp1),
+              Var = var(Resp1),
+              N = n(),
+              First = first(Resp1))
+```
+
+# Reminder: mutate vs summarize
+
+```{r mutate v summarize}
+dat.1 %>%  group_by(Treatment, Plot) %>% 
+  mutate(Mean = mean(Resp1))
+
+dat.1 %>% group_by(Treatment, Plot) %>% 
+  summarize(Mean = mean(Resp1))
+```
+
+# Tikus data
+
+For each year (time), find the mean abundance of pocillopora damicornis.
+
+```{r summarize tikus}
+head(tikus)
+
+tikus %>% 
+  group_by(time) %>% 
+  summarize(Mean = mean(`Pocillopora damicornis`))
+
+str(tikus)
+# Does not work - can't use across with group_by?
+# tikus %>% 
+#   as_tibble() %>% 
+#   group_by(time) %>% 
+#   summarize(across(`Pocillopora damicornis`), 
+#             list(Mean = mean))
+```
 
 Subset columns
 =================
+
+`select()` columns.
+
+```{r select}
+dat.1 %>% select(Treatment, Plot, Dose, Time, Resp1)
+```
+
+Can also change the column names.
+
+```{r select name change}
+dat.1 %>% select(Treatment, Plot, Dose, Time, Abundance=Resp1)
+```
+
+```{r select all but...}
+dat.1 %>% select(-Resp2)
+```
+
+# Helper functions
+
+* `contains()` - every column that contains an 'a'
+* `ends_with()`
+* `starts_with()`
+* `matches()` - matches a regular expression
+* `everything()`
+* `across()`
+
+Columns containing an R. Not case sensitive.
+
+```{r contains}
+dat.1 %>% select(contains('r'))
+```
+
+```{r starts with}
+dat.1 %>% select(starts_with('r'))
+
+dat.1 %>% select(ends_with('e'))
+```
+
+```{r everything example}
+dat.1 %>% select(Resp1, everything())
+```
+
+```{r using colon to select}
+dat.1 %>%  select(Treatment:Time)
+```
+
+Murray is not a fan because it relies on the order of the columns.
+
+With nasa data, select out lat, long, and all columns that have cloud in them.
+
+```{r}
+head(nasa)
+nasa %>% 
+  select(lat, long, contains('cloud'))
+# OR
+head(nasa)
+nasa %>% 
+  select(lat, long, starts_with('cloud')) %>% 
+  head()
+# OR
+nasa %>% 
+  select(lat, long, matches('cloud.*')) %>% 
+  head()
+```
+
+From tikus, select rep, time, and only species that don't contain pora.
+
+```{r}
+tikus %>% 
+  select(rep, time, -contains('pora'))
+# OR
+  select(rep, time, everything(), -contains('pora'))
+```
 
 ## Regular expressions (regex)
 
 https://github.com/rstudio/cheatsheets/raw/master/data-transformation.pdf
 
+```{r match with regex}
+dat.1 %>%  select(matches("^.{4}$"))
+```
+
+# Rename
+
+Only want to rename a few columns and keep everything else.
+
+```{r rename}
+dat.1 %>% rename(Exposure = Treatment,
+                 Richness = Resp1)
+```
+
 Filtering
 =============
+
+Pick rows using logical conditions.
+
+```{r filtering for Dose H}
+dat.1 %>% filter(Dose == 'H')
+```
+
+!= is does not equal
+>, <, <=, >= only on numeric
+
+```{r multiple conditions}
+dat.1 %>% filter(Dose == 'H' | Dose == 'M') %>%  # H OR M
+  head()
+# OR
+dat.1 %>% filter(Does %in% c('H', 'M')) %>% 
+  head()
+```
+
+```{r multiple conditions different columns}
+dat.1 %>%  filter(Dose == 'H' & Resp1 < 25) # both conditions must be met
+
+dat.1 %>% filter(Dose == 'H' | Resp1 < 25) # either needs to be satisfied
+```
+
+Can nest filters.
+
+Using nasa, filter to the largest ozone values for the second month of the last year.
+
+```{r levels remain when filtering}
+glimpse(nasa)
+max(nasa$year)
+
+nasa %>% 
+  filter(year == max(year) & month == 2) %>% 
+  arrange(-ozone) %>% 
+  head(1)
+nasa %>% filter(year == max(year) & month == 2) %>% 
+  arrange(-ozone) %>% slice(1:5)
+# OR
+nasa %>% 
+  filter(year == max(year) & month == 2) %>% 
+  top_n(5, ozone)
+```
+
+# Effects of filtering
+
+Filtering factors retains the metadata/levels of the original data.
+
+```{r filtering and levels}
+levels(dat.1$Dose)
+
+dat.3 <- dat.1 %>% filter(Plot == 'P1')
+levels(dat.1$Plot) # 4 levels even though filtered for 1 plot
+str(dat.3$Plot)
+
+dat.3 %>%  pull(Plot) # still see 'ghost' levels
+
+dat.3 <- dat.3 %>% droplevels()
+dat.3 %>%  pull(Plot) # only P1 level
+```
+
 
 Reshaping data
 =================
