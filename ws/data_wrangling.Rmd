@@ -104,7 +104,7 @@ Important data manipulation functions:
 
 # Data files
 
-load() loads objects in R format. Can save things as R formats using save(). Just list multiple object names to save in the same .RData file. 
+`load()` loads objects in R format. Can save things as R formats using `save()`. Just list multiple object names to save in the same .RData file. 
 
 Fake dataset for manipulating.
 Plots with 3 treatments with different time points and responses.
@@ -212,12 +212,105 @@ dat.1 %>% arrange(Treatment, mean(c(Resp1, Resp2))) # note vector to mean Resp1 
 Adding columns - mutate()
 ===========================
 
-mutate() is working row by row. 
+`mutate()` is working row by row. Mutated dataframe not saved here but would probably want to.
 
 ```{r mutate Sum column}
 dat.1 %>% mutate(Sum = Resp1 + Resp2)
 ```
 
+Data transformation of columns.
+
+```{r log a column}
+dat.1 %>% mutate(logResp1 = log(Resp1)) # log() is natural log
+```
+
+# Centering of data
+
+```{r centering}
+dat.1 %>% mutate(MeanResp1 = mean(Resp1), # is a constant, summary function operates on whole column
+                 cResp1 = Resp1 - MeanResp1) # 2nd bit uses column just created
+# OR if just want the centered variable..
+dat.1 %>% mutate(cResp1 = Resp1 - mean(Resp1)) %>% 
+  head()
+```
+
+`mutate()` must give you as many rows as you started with.
+
+Changing vector types (classes).
+
+```{r Time to factor}
+dat.1 %>% mutate(Time = factor(Time)) %>% as_tibble
+```
+
+Change factor to more descriptive factor labels. 
+
+```{r changing factor labels}
+dat.1 %>% mutate(Dose = fct_recode(Dose, High = 'H', Medium = 'M')) %>% 
+  as_tibble
+```
+
+Pull out a single column as a vector with `pull()`.
+
+```{r pull}
+dat.1 %>% pull(Dose) # levels in alphabetical order
+
+dat.1 %>% 
+  mutate(dose = fct_relevel(Dose, c('L', 'M', 'H'))) %>% # relevel factors before pull()
+  as_tibble() %>% 
+  pull(Dose)
+```
+
+# Lead and lags
+
+Useful to correlate response to last week or in future. Correlate to previous conditions.
+
+```{r lead and lag}
+dat.1 %>% mutate(leadResp2 = lead(Resp2), # shift up one
+                 lagResp2 = lag(Resp2)) # shift down one
+```
+
+# Ranking - see slides
+
+# Window functions
+
+Logical bins: Resp1 between 20 and 40.
+
+```{r Resp1 between 20 and 40}
+dat.1 %>% mutate(between(Resp1, 20, 40)) # binary 0, 1 as T/F
+```
+
+Categorical bins:
+
+`ifelse()` condition when TRUE and condition when FALSE - nested `ifelse()` can be harder to follow.
+
+`case_when()` avoids nesting, easier to follow, and neater.
+
+```{r}
+dat.1 %>% mutate(fResp1 = ifelse(Resp1 < 30, 'Low',
+                          ifelse(between(Resp1, 31, 50), 'Medium', 'High')))
+# OR
+dat.1 %>% mutate(fResp1 = case_when(Resp < 31 ~ 'Low',
+                          between(Resp1, 31, 50 ~ 'Medium',
+                          Resp1 > 50 ~ 'High')))
+```
+
+```{r categories with cut}
+dat.1 %>% mutate(fResp1 = cut(Resp1, breaks = c(0, 31, 50, 200), # very low and very high bounds, can use -Inf/Inf
+                              labels = c("Low", "Medium", "High")))
+```
+
+Bin Time into Start (1 and 2) and end (3 and 4)
+
+```{r bin time}
+dat.1 %>% head()
+
+dat.1 %>% mutate(SEtime = case_when(Time < 3 ~ 'Start',
+                                    Time > 2 ~ 'End'))
+# OR
+dat.1 %>% mutate(Period = cut(Time, breaks = 2, labels = c('Start', 'End'))) # bit lazy
+# OR
+dat.1 %>% mutate(Period = cut(Time, breaks = c(0, 2.5, 4.5), labels = c('Start', 'End'))) # more breaks
+```
 
 Summarising (aggregating) data
 =================================
