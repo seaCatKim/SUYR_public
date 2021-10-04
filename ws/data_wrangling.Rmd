@@ -77,10 +77,16 @@ Important data manipulation functions:
 
 # Data files
 
+load() loads objects in R format. Can save things as R formats using save(). Just list multiple object names to save in the same .RData file. 
+
 ```{r getData, results='markdown', eval=TRUE}
 load(file='../data/manipulationDatasets.RData')
 data.1 %>% head
 ```
+
+Write little programs that do one function - filter, sort, etc. - and then string them together using pipes.
+
+Can use this for any function where a dataframe is the first argument.
 
 Sorting data
 ================
