@@ -15,12 +15,14 @@ here::here()
 ## Preamble
 
 **packages**
-  * having issues? shutdown RStudio and try in just R
+* having issues? shutdown RStudio and try in just R
 
 **lintr** package
-  * checks for tidy code
-  * will flag spaces, double quotes, etc.
-  * load, find under 'Addins'
+* checks for tidy code
+* will flag spaces, double quotes, etc.
+* load, find under 'Addins'
+  
+RStudio is a web browser. Fun fact.
   
 ## Version Control
 * save space with different versions esp when collaborating
@@ -114,44 +116,74 @@ Create a new branch for some experimental coding.
   * Don't click README or other options to get Quick set up page
 4. Step 4: push/pull from remote to local repository
 
-
-```{r }
-```
-
 ### Directory structures and tidy code
 
-|_.git
-|_.gitignore
-|-data
-|   |-primary
-|   |-processed
-|   |-modelled
-|-outputs
-|   |-figures
-|   |-tables
-|-scripts
-|   |-01_loadData.R
-|   |-02_processData.R
-|   |-03_modelData.R
-|   |-04_summarizeData.R
-|-docs
-|   |-index.Rmd
-|   |-01_loadData.Rmd
-|   |-...
+|_.git  
+|_.gitignore  
+|-data  
+|   |-primary  
+|   |-processed  
+|   |-modelled  
+|-outputs  
+|   |-figures  
+|   |-tables  
+|-scripts  
+|   |-01_loadData.R  
+|   |-02_processData.R  
+|   |-03_modelData.R  
+|   |-04_summarizeData.R  
+|-docs  
+|   |-index.Rmd  
+|   |-01_loadData.Rmd  
+|   |-...  
 
-### Reproducibile Research
+
+## Reproducibile Research
 
 1. Version control code
 2. Pre-registering intentions
 
-#### Documentation
+### Documentation
 
 How to transmit analyses to other people?
 
 Need a general language to transfer to other products, passable to anything.
 
-#### Markdown
-Low level language. 
-Metadata header within '---' fences.
+### Markdown
 
-Run markdown through a universal converter *pandoc*. Can convert to other documents - .docx, .html, .tex, etc. Pdf requires latex document preparation system.
+Low level language. 
+Metadata header within --- fences.
+
+Run markdown through a universal converter *pandoc*. Can convert to other documents: .docx, .html, .tex, etc. 
+Pdf requires latex document preparation system.
+
+Can get templates for reports, journals, etc.
+
+**Option 1: Standalone**
+Create .Rmd embed all the code and notes.
+
+> Issues - works for smaller projects
+
+**Option2: External script**
+Use fences ## ---- and knitr::read_chunk('script.R') in the .Rmd file. Can eval = FALSE in chunk options for time extensive code. Code is run in the script file that is called into the .Rmd with the fence. Can just read in outputs like figures or pictures.
+
+Can come out of sync. Need to run .Rmd when scripts are updated.
+
+#### Rmarkdown-examples in resources directory
+
+Use knitr::kable for tables.
+
+Can reference figures 
+
+> Example:  
+Bla bla (see Figure \@ref(fig:BODfig)).  
+(ref:fig-cap) Biochemical oxygen demand.   
+In options fig.cap='ref:fig-cap)'  
+
+Include graphics with knitr::include_graphics.
+
+Include math notation for formulae.
+
+Can have tabs across the page - one model on each tab.
+
+> {.tabset .tabset-fade}
