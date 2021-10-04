@@ -1,0 +1,189 @@
+---
+title: "Day 1 - Murray Hall Stats Course"
+author: "Catherine Kim"
+date: "October 4, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+here::here()
+```
+
+## Preamble
+
+**packages**
+* having issues? shutdown RStudio and try in just R
+
+**lintr** package
+* checks for tidy code
+* will flag spaces, double quotes, etc.
+* load, find under 'Addins'
+  
+RStudio is a web browser. Fun fact.
+  
+## Version Control
+* save space with different versions esp when collaborating
+
+### Git
+* not the only versioning system - subversion (git is better)
+* distributed (doesn't live in one spot) version control system
+  * distributed because collaboration is so important
+  * developed for linux kernel
+* stores snapshots of the file system - **commits**
+* system consists of three trees:
+  * Workspace
+  * Staging Area
+  * Local Repository 
+    ** keeps track of parent file and differences
+
+Files can be in one of four states:
+  1. untracked 
+  2. staged
+  3. committed
+  4. modified
+* local repository
+* remote repository - like GitHub
+
+#### Test Repo
+* Deleting a git repo is just deleting the .git folder
+* .git folder holds the other two trees 'staging' and 'local repo'
+* .gitignore file is the *blacklist*
+  * Don't include passwords etc '.Ruserdata'
+  * Don't commit data
+* commit - compares 'hash' 'sharcode' between codes
+  * First 7 characters of the hash is unique 
+  * Commit early and often
+* Tags
+  * Command line or gert
+  * Git tag -a <tag> -m <message> e.g. "V1 "Version 1"
+  * gert::git_tag_create(name = "V1", message = "Version 1")
+  * **no special characters in tags**
+
+Rolling back to a previous commit:
+
+1. Checkout
+  * go back to previous commit - *detached head*
+    * bit more convoluted with commands
+    * gert::git_branch_create(branch='temp', ref='', checkout=T)
+    * use a temporary branch
+    * checkout=T - go back to that commit
+  * git checkout #
+  * go back to current
+    * git checkout master OR tag-V1 OR shar
+    * gert::git_branch_checkout(branch = 'master')
+2. Reset
+  * reset at prior commit - like it never happened (accidentally commited passwords, credentials, etc.)
+  * dramatic - can mess up collaboration
+3. Revert
+  * reverse - do the inverse
+  * not built into RStudio
+  * git revert HEAD --no-edit 
+    * OR tag OR shar
+    * don't need message because you get one
+    
+#### Branching
+Create a new branch for some experimental coding.
+
+**Merging** drags a branch to master (must be on master)
+
+* git merge <Name>
+* git merge Experimental 
+* manually fix conflicts between 'fences'
+* commit with message
+
+### GitHub
+
+1. Step 1: get a github account and verify email address
+2. Step 2: create one or more Personal Access Tokens (PAT). Passwords give full access PATs can be more personalized with read/write access, just read access, etc. Can create PATs in GitHub or from RStudio.
+  * usethis::create_github_token()
+    * Send to GitHub, tick write access, etc.
+  * gitcreds::gitcreds_set()
+    * Paste in PAT sharcode
+  * Check if you have token:
+    * gitcreds::gitcreds_get()
+  * Copied credentials to computer wallet/keychain. The machine itself communicating with GitHub. Would need separate one for BitBucket, GitLab, etc. Usually use a different one for different machines.
+3. Step 3: create a remote repository on GitHub
+  * If not using use_github()
+  * git remote add origin https://github.com/seaCatKim/Test.git
+  * 
+  * using gert - did not work
+    * gert::git_remote_add(url='https://github.com/seaCatKim/Test.git')
+    * gert::git_remote_list()
+  * Public - word search findable. Get access to GitHub pages.
+  * Don't click README or other options to get Quick set up page
+4. Step 4: push/pull from remote to local repository
+
+### Directory structures and tidy code
+
+|_.git  
+|_.gitignore  
+|-data  
+|   |-primary  
+|   |-processed  
+|   |-modelled  
+|-outputs  
+|   |-figures  
+|   |-tables  
+|-scripts  
+|   |-01_loadData.R  
+|   |-02_processData.R  
+|   |-03_modelData.R  
+|   |-04_summarizeData.R  
+|-docs  
+|   |-index.Rmd  
+|   |-01_loadData.Rmd  
+|   |-...  
+
+
+## Reproducibile Research
+
+1. Version control code
+2. Pre-registering intentions
+
+### Documentation
+
+How to transmit analyses to other people?
+
+Need a general language to transfer to other products, passable to anything.
+
+### Markdown
+
+Low level language. 
+Metadata header within --- fences.
+
+Run markdown through a universal converter *pandoc*. Can convert to other documents: .docx, .html, .tex, etc. 
+Pdf requires latex document preparation system.
+
+Can get templates for reports, journals, etc.
+
+**Option 1: Standalone**
+Create .Rmd embed all the code and notes.
+
+> Issues - works for smaller projects
+
+**Option2: External script**
+Use fences ## ---- and knitr::read_chunk('script.R') in the .Rmd file. Can eval = FALSE in chunk options for time extensive code. Code is run in the script file that is called into the .Rmd with the fence. Can just read in outputs like figures or pictures.
+
+Can come out of sync. Need to run .Rmd when scripts are updated.
+
+#### Rmarkdown-examples in resources directory
+
+Use knitr::kable for tables.
+
+Can reference figures 
+
+> Example:  
+Bla bla (see Figure \@ref(fig:BODfig)).  
+(ref:fig-cap) Biochemical oxygen demand.   
+In options fig.cap='ref:fig-cap)'  
+
+Include graphics with knitr::include_graphics.
+
+Include math notation for formulae.
+
+Can have tabs across the page - one model on each tab.
+
+> {.tabset .tabset-fade}
