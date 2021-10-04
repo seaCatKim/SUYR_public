@@ -102,33 +102,121 @@ Important data manipulation functions:
 +--------------------------+-----------------------------------+------------+
 
 
-# Piping
-
 # Data files
 
 load() loads objects in R format. Can save things as R formats using save(). Just list multiple object names to save in the same .RData file. 
 
+Fake dataset for manipulating.
+Plots with 3 treatments with different time points and responses.
+
 ```{r getData, results='markdown', eval=TRUE}
 load(file='../data/manipulationDatasets.RData')
-data.1 %>% head
+dat.1 %>% head
 ```
+
+str() used on any object. Tells you what the data are considered as. Is it what you expect? Could have a numeric column that is character because of a stray letter.
+
+```{r checking data}
+str(dat.1)
+
+dat.1 %>% str()
+```
+
+Dense summary:
+
+```{r glimpse}
+glimpse(dat.1)
+```
+
+# Tidyverse
+
+Collection of packages designed to work together.
+
+Has a grammar.
+
+## Dataframes and tibbles
+
+Most things should work with both but not always...
+
+```{r print as tibble}
+dat.1 %>% as_tibble()
+# SAME AS
+dat.1 %>% as_tibble() %>% print
+```
+
+**Tibbles:**
+* Print to fit on the consol 'page.'
+* Rounds numbers for display, actual data has not been changed.
+* Can put anything you like in a cell (instructions for a plot, a tibble) vs 1 number/factor in a dataframe.
+  * For tibble with 2 factors - can put instructions for a graph in a cell. Pack a lot of information and don't need to use loops.
+  * R is an interpretive (vs compiled) language where looping is slow.
+
+# Piping
 
 Write little programs that do one function - filter, sort, etc. - and then string them together using pipes.
 
 Can use this for any function where a dataframe is the first argument.
 
-Sorting data
-================
 ```{r, results='markup'}
 head(dat.1)
 #OR
 dat.1 %>% head()
 #OR
-dat.1 %>% head
+dat.1 %>% head # with no args can leave off brackets - lintr will probably yell though
 ```
 
-Adding columns - mutate
+```{r storing piped outputs}
+dat.1.trunc <- dat.1 %>% head()
+# OR
+dat.1 %>% head() -> dat.1.trunc
+# more accessible in that it follows the logical order
+```
+
+Sorting data using arrange()
+================
+
+Does not reorder levels of a factor.
+
+```{r sort by Resp1}
+dat.1 %>% arrange(Resp1) # ascending order
+
+# descending order
+dat.1 %>% arrange(-Resp1) %>% head
+dat.1 %>% arrange(desc(Resp1)) %>% 
+  head %>% knitr::kable() # will come out as a nice neat table in html, no scroll bar so just used head
+```
+
+Sort by multiple columns:
+
+```{r sort more columns}
+dat.1 %>%  arrange(Dose, Resp1)
+```
+
+Sort by the sum of Resp1 and Resp2. Don't need to be existing columns - can create a new column from existing to sort by.
+
+```{r sort by operation}
+dat.1 %>% arrange(Resp1 + Resp2)
+```
+
+Sort by treatment then time.
+
+```{r sort treatment, time}
+head(dat.1)
+dat.1 %>% arrange(Treatment, Time)
+```
+
+```{r Treatment then mean of Resp1, Resp2}
+dat.1 %>% arrange(Treatment, mean(c(Resp1, Resp2))) # note vector to mean Resp1 and Resp2 columns
+```
+
+Adding columns - mutate()
 ===========================
+
+mutate() is working row by row. 
+
+```{r mutate Sum column}
+dat.1 %>% mutate(Sum = Resp1 + Resp2)
+```
 
 
 Summarising (aggregating) data
