@@ -42,7 +42,8 @@ bibliography: ../resources/references.bib
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler',
+                      fig.width = 10, fig.height = 10)
 options(tinytex.engine = 'xelatex')
 ```
    
@@ -50,7 +51,7 @@ options(tinytex.engine = 'xelatex')
 
 Load the necessary libraries
 
-```{r libraries, results='markdown', eval=TRUE, warning=TRUE, message=FALSE}
+```{r libraries, results='markdown', eval=TRUE, warning=FALSE, message=FALSE}
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
 library(ggfortify) #for model diagnostics
@@ -68,12 +69,7 @@ library(tidyverse) #for data wrangling
 
 # Scenario
 
-Here is an example from @Fowler-1998-1998. An agriculturalist was interested in
-the effects of fertiliser load on the yield of grass.  Grass seed was sown
-uniformly over an area and different quantities of commercial fertiliser were
-applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later
-the grass from each plot was harvested, dried and weighed.  The data are in the
-file **fertilizer.csv** in the **data** folder.
+Here is an example from @Fowler-1998-1998. An agriculturalist was interested in the effects of fertiliser load on the yield of grass.  Grass seed was sown uniformly over an area and different quantities of commercial fertiliser were applied to each of ten 1 m<sup>2</sup> randomly located plots.  Two months later the grass from each plot was harvested, dried and weighed.  The data are in the file **fertilizer.csv** in the **data** folder.
 
 ![](../resources/turf.jpg){width=70%}
 
@@ -92,23 +88,34 @@ file **fertilizer.csv** in the **data** folder.
 ---------------- ---------------------------------------------------
 
  
-The aim of the analysis is to investigate the relationship between fertiliser
-concentration and grass yield.
+The aim of the analysis is to investigate the relationship between fertiliser concentration and grass yield.
+
+Predictor is set (not real-world measurements) so technically no uncertainty. Strict definition of a linear regression but doesn't really matter. 
+
+Need to assess whether assumptions are met (normality, equal variance, independence - can't do much about that).
+
 
 # Read in the data
 
+`trim_ws` stands for trim white space - white space at the start/end of a word will get trimmed off.
 
 ```{r readData, results='markdown', eval=TRUE}
 fert = read_csv('../data/fertilizer.csv', trim_ws=TRUE)
 ```
 
+Routine practice to check that things have read in properly. Everything looks as expected.
 
-```{r examinData}
+R has polymorphism so based on input will choose the appropriate summary.X function.
+
+```{r examine data}
 glimpse(fert)
 ## Explore the first 6 rows of the data
 head(fert)
 str(fert)
+summary(fert)
 ```
+
+Uppercase means data.
 
 # Exploratory data analysis
 
@@ -119,35 +126,288 @@ y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i = \beta_0 + \beta_1 x_i
 $$
 
-where $y_i$ represents the $i$ observed values, $\beta_0$ and $\beta_1$
-represent the intercept and slope respectively, and $\sigma^2$ represents the
-estimated variance.
+where $y_i$ represents the $i$ observed values, $\beta_0$ and $\beta_1$ represent the intercept and slope respectively, and $\sigma^2$ represents the estimated variance.
 
 
- 
+```{r scatterplot}
+ggplot(fert, aes(x = FERTILIZER, y = YIELD)) +
+  geom_point( color = 'red') +
+  geom_smooth(method = 'lm')
+```
 
+LOESS - locally weighted spline smoother. Fitting small splines though small windows of your data. Free to wander.
+
+Looks pretty linear so changed method to linear model (lm). Same model as below, but no other assumption checking being done so not statistics as such. 
+
+Can see no obvious relationship between mean and variance. 
+
+For normality:
+
+Boxplot, look for equally spaced quadrants.
+
+```{r boxplot}
+ggplot(fert, aes(y = YIELD)) +
+  geom_boxplot()
+```
+
+Violin and histogram plots not as useful with a small amount of data.
+
+```{r violin}
+ggplot(fert, aes(x = FERTILIZER, y = YIELD)) +
+  geom_violin()
+```
+
+```{r histogram}
+ggplot(fert, aes(x = YIELD)) +
+  geom_histogram()
+```
+
+```{r density}
+ggplot(fert, aes(x = YIELD)) +
+  geom_density()
+```
+
+Nothing here to dissuade us from using a simple linear regression - homogeneity of variance and normality looks okay.
 
 # Fit the model
 
+Solving simultaneous zeros 
 
+$$
+\mu = \beta + \beta_1 x\\
+    = 1 + x_i   \    \beta_0, \beta_1\\
+    \sim 1 + x
+$$
 
+Naming convention, data then what you are doing to it.
 
+```{r fit linear regression}
+fert.lm <-  lm(YIELD ~ 1 + FERTILIZER, data = fert)
 
+# the 1 intercept is assumed so can drop
+fert.lm <-  lm(YIELD ~ FERTILIZER, data = fert)
 
+# specifically do not want an intercept, want 0 as the intercept
+fert.lm.noB <-  lm(YIELD ~ -1 + FERTILIZER, data = fert) # OR 0
+```
+
+Most model outputs are in **lists**. Rarely need to access lists themselves, usually use extractor functions.
+
+Model ouput for lm:
+
+```{r lm output}
+fert.lm %>% str() # is a list
+coef(fert.lm) # finds coefficients in list
+residuals(fert.lm) # finds residuals - 10 observations so 10 residuals
+```
+
+Glm is using maximum likelihood versus ordinary least squares for lm.
+
+```{r fit glm}
+fert.glm <- glm(YIELD ~ FERTILIZER, data = fert, family = gaussian()) # gaussian is the default family 
+```
 
 # Model validation {.tabset .tabset-faded}
 
+```{r autoplot}
+fert.lm %>% autoplot(which = 1:6, ncol = 2, label.size = 3)
+```
 
+**Residuals v Fitted** - want no pattern. 
+**Standarized residuals** - normalized. Should mirror residuals except for autocorrelation.
+**Q-Q Normal** - helps identify if distribution is appropriate. Want points straight along the line.
+**Cook's distance** - influence of individual observations. Ideally, observations equally influential. In both x x and y directions. Leverage - influence in x direction. Residuals - influence in y direction. Both together is *Cook's Distance*. Ideally, under 0.8. Any observation > 0.8 is considered influential. Labelled numbers refer to row numbers.
+Last two: trying to identify which (residual/leverage) is influential as Cook's is a combination of both.
 
+```{r influence}
+fert.lm %>% influence.measures()
+```
 
+> Error in grid.Call(C_convert, x, as.integer(whatfrom), as.integer(whatto),  : 
+  Viewport has zero dimension(s)
+  
+`dev.off()` didn't work so added fig.width/height = 10 to increase size of device
+  
+```{r check_model, fig.width=10, fig.height=10}
+fert.lm %>% performance::check_model()
+```
 
+## DHARMa package
 
+Different approach to model diagnostics. Gives simulated residuals - some distribution (binomal) difficult to get meaningful diagnostics.
 
+How different are your residuals to the simulated set of residuals.
 
+**Left plot** is similar to Q-Q plot - want points along the line. Also gives tests, a good guide but can be more stringent than the things they are trying to protect. Do your best to make them non significant, but if still being triggered not the only thing should use. Pay attention to the visuals.
 
+**Right** is the residual plot with quantile regessions overlaid on top.
 
+```{r simulated residuals}
+fert.resid <- fert.lm %>% simulateResiduals(plot = TRUE)
+
+# access to individual tests
+fert.resid %>%  testResiduals()
+fert.resid %>%  testDispersion()
+fert.resid %>%  testZeroInflation()
+```
+
+### sjPlot
+
+```{r sjplot, fig.width=10, fig.height=10}
+fert.lm %>% plot_model(type = 'diag') %>% # diagnostic plots
+  plot_grid() # plot in a grid
+```
+
+Partial plot of line of best fit and data points. Effect of one variable holding others consistent.
+
+These plots can either be conditional or marginal.
+- Conditional shows an effect of a condition
+- Marginal shows the average of conditions 
+    - harder to get, predict all and average
+
+```{r partial plot}
+fert.lm %>% plot_model(type = 'eff', show.data = TRUE) # gives you marginal effects
+```
+
+### allEffects marginal plot
+
+Pink is loess smoother.
+One way to add raw data onto the plot take predicted value and add the residual - quasi raw data onto the plot. Here, can just add the raw data.
+
+```{r marginal plots using allEffects}
+plot(allEffects(fert.lm, residuals = TRUE))
+```
+
+### Conditional effects
+
+No difference between marginal/conditional in these cases as only one predictor variable.
+
+Here just adding the raw data - not as sophisticated.
+
+```{r conditional}
+fert.lm %>% ggpredict() %>% # running predict to create line which is always conditional
+  plot(add.data = TRUE, jitter = FALSE) # default jitter is TRUE
+```
+
+### emmeans package - estimated marginal means
+
+```{r marginal using emmeans}
+fert.lm %>% ggemmeans(~ FERTILIZER) %>% # tell it which predictor you want the partial plot for
+  plot(add.data = TRUE, jitter = FALSE)
+```
 
 # Model outputs {.tabset .tabset-faded}
+
+Summarize model:
+
+Summary of residuals - should have explored more thoroughly.
+Equation said three unknowns - $sigma^2$, $\beta_0$, $\beta_1$
+Estimate at intercept ($\beta_0$) 
+
+    - is yield with 0 fertilizer which is extrapolated in this case
+    - Std. Error 
+    - t distribution is squished normal distribution
+    - Squished-ness depends on degrees of freedom
+    - Intercept here is not a hypothesis not worth testing here
+
+Main test is of the slope.
+Slope ($\beta_1$) of 0 means no relationship - hypothesis of interest.
+
+    - Positive slope - positive relationship
+    - p-value - less than 0.05 or not
+        - no highly significant, etc.
+        - ignore stars
+        - measure of power, more samples
+        - not of effect size or importance
+
+R-squared - tell us how much the model is explaining
+
+- proportion of variance that is explained by the model
+- amount of variance explained / total variance
+- calculated from residuals and means to residuals
+    - very much an OLS property
+    - depends on how it is calculated - pseudo $R^2$
+- lm explains 0.92 variance
+- adjusted R-squared for comparing models
+    - adjust for how many variables
+    - not used anymore
+    
+ANOVA stats not telling us anything useful here.
+
+```{r summarize model}
+fert.lm %>% summary()
+```
+
+**Center** predictor variable
+
+No effect on the slope.
+
+**Did** effect the intercept which is now the mean value. Hypothesis test is still nonesense but intercept is now meaningful. Average yield is 163.5.
+
+```{r scaled model}
+lm(YIELD ~ scale(FERTILIZER, scale = FALSE), # centered the predictor, subtract each observation of the mean
+   # scale = FALSE prevents scaling 1 sd
+   data = fert) %>% summary
+```
+
+```{r scale example}
+c(1,2,3)
+scale(c(1,2,3), scale = FALSE) # adds an attribute with original mean 'scale:center'
+
+scale(c(1,2,3), scale = TRUE) # also adds sd 'scaled:scale', sd also happens to be 1 so numbers are the same
+```
+
+glm model outputs very similar to lm model
+
+Dispersion parameter - is the variance essentially. Only really pay attention to if if poisson or negative binomial.
+
+AIC - Akiake info criterio - **can** use to compare models. Calculated from deviance. 
+
+Deviances 
+
+- have residuals can sum the residuals for variance
+- no residuals from maximum likelihood
+- -2 x likelihood = the amount unexplained in nonsense units
+- penalize for number of parameters etc end up with AIC
+    - why lower AIC is better, because lower likelihood is better
+- Null deviance from $y \sim \beta_0$
+- Residual deviance form the model
+- Can get ratios between the two
+
+```{r glm summary}
+fert.glm %>% summary()
+
+# likelihood ratio test comparing the two deviances with a p-value
+anova(fert.glm, test = 'Chisq') # chisq distribution
+anova(fert.glm, test = 'LRT') # likelihood ratio test
+```
+
+confidence intervals associated with intercept and slope.
+
+Can use for hypothesis test. If interval does not include 0 then is the same as having a p-value < 0.05.
+
+Slope could be as low as 0.61 or as high as 1.00 and describe in results. Do need to be careful about how you phrase things with confidence intervals.
+
+```{r CI}
+fert.lm %>% confint()
+```
+
+### Tidy output standardized across different models 
+
+```{r tidy outputs}
+fert.lm %>% tidy(conf.int = TRUE)
+```
+
+Will embed nicely into markdown.
+
+```{r sjPlot table}
+fert.lm %>% sjPlot::tab_model(show.se = TRUE, show.aic = TRUE)
+```
+
+```{r tidy glm output}
+fert.glm %>% tidy(conf.int = TRUE) %>% 
+  kable # pass to kable will be in markdown format, neater
+```
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
@@ -155,15 +415,99 @@ estimated variance.
 
 # Predictions {.tabset .tabset-faded}
 
+Predict yield when fertilizer is 110:
+y = 51.9 + 0.8 * 100
+
+Set up a prediction grid. What are the values you want to predict for?
+
+```{r prediction grid}
+newdata <- data.frame(FERTILIZER = 110)
+# pass new data to predict
+fert.lm %>% predict(newdata = newdata)
+```
+
+Predicted yield of fertilizer of 110 is 141.2.
+
+Can add confidence intervals for simple model.
+
+```{r CI for prediction}
+fert.lm %>% predict(newdata = newdata, interval = 'confidence')
+```
+
+Difference between **confidence intervals** and **prediction intervals**.
+
+How can CI not even include the data? 
+
+If we had new value of 110, on *average* would expect yield of 141 with interval 126-156.
+
+Prediction interval - what do I expect for a *single observation*. Will be a lot wider and include all of observations.
+
+Interval is mean +/- standard deviation. Turns it into a prediction interval.
+
+Could predict for multiple points. Will do, but not with predict function - does not always give CI. Also, are conditional effects. Mostly, want marginal effects, not prediction for one level of a factor.
+
+```{r predict with marginal means}
+newdata <- list(FERTILIZER = 110)
+fert.lm %>% emmeans(~ FERTILIZER, at = newdata) # outputs rounded for display
+```
+
+### Predict many points using marginal
+
+```{r create predict grid}
+fert.grid <- with(fert, list(FERTILIZER = seq_range(FERTILIZER, n = 100))) # create list with item FERTILIZER with sequence range of 100 within range of FERTILIZER
+# OR
+# fert.grid <- list(FERTILIZER = seq_range(fert$FERTILIZER, n = 100))
+fert.grid # one item with 100 values of fertilizer
+```
+
+Predict yield at the 100 new fertilizer points.
+
+```{r create new prediction grid}
+newdata <-  fert.lm %>% 
+  emmeans(~ FERTILIZER, at = fert.grid) %>% 
+  as.data.frame() # easier to plot
+
+newdata %>% head()
+```
+
+Have everything we need to make a nice graph.
+
+Expressions are forumlae so use ~ as spaces. Can use expressions with `xlab()`, `ylab()` functions. See `demo(plotmath)`.
+
+```{r customized plot}
+ggplot(newdata, aes(x = FERTILIZER, y = emmean)) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, ), 
+                 fill = 'blue', alpha = 0.3) + # not in aes() so no scales associated
+  geom_line() +
+  geom_point(data = fert, aes(y = YIELD), cex = 2) + # does need to specify x = FERTILIZER because fert does have a FERTILIZER variable
+  scale_y_continuous(expression(Grass~yield~(g.m^-3)), 
+                     breaks = seq(50, 250, by = 50)) + # R's building in expression language
+  scale_x_continuous(expression(Fertilizer~concentration~(g.ml^-1))) +
+  theme_classic()
+```
 
 # Additional analyses {.tabset .tabset-faded}
+
+What is the expected increase in yield for increasing fertilizer from 100 to 200?
+
+```{r pairwise test}
+newdata <- list(FERTILIZER = c(200, 100)) # subtract 200 from 100
+
+fert.lm %>% emmeans(~ FERTILIZER, at = newdata) %>% # not what want
+  pairs() %>% 
+  confint() # add CI
+# OR
+fert.lm %>% emmeans(~ FERTILIZER, at = newdata) %>% # not what want
+  pairs() %>% 
+  summary(infer = TRUE) # also gives p-value
+# pairwise comparison same but less flexible
+# fert.lm %>% emmeans(pariwise ~ FERTILIZER, at = newdata)
+```
+
  
 # Summary figures {.tabset .tabset-faded}
 
-Although there are numerous easy to use routines that will generate partial
-plots (see above), it is also useful to be able to produce the data behind the
-figures yourself.  That way, you can have more control over the type and style of
-the figures.
+Although there are numerous easy to use routines that will generate partial plots (see above), it is also useful to be able to produce the data behind the figures yourself.  That way, you can have more control over the type and style of the figures.
 
 Producing a summary figure is essentially plotting the results of predictions.
 In the case of a trend, we want a series of predictions associated with a
