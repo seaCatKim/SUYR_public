@@ -1,0 +1,215 @@
+---
+title: "Day2"
+author: "Catherine Kim"
+date: "05/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction to linear modelling
+
+What is the differenct between mathematical modelling and statistical modelling?
+
+**uncertainty** or noise
+
+### What is a **statistical model**?
+
+- Stochastic mathematical expression
+- Low-dimensional summary
+    - Not recreating the whole ecosystem
+    - More variables in a model does not make a better model - you get a model hard to estimate
+    - Limited number of things in a model
+- relates one or more dependent **random variables** to one or more independent variables
+
+A random variable is one whose **values depend** on a set of random events and are described by a **probability distribution**. The distribution is also part of the model.
+
+- Embodies a **data generation process** along with the **distributional assumptions** underlying this generation
+    - Limited number of these distributions: Gaussian, Poisson, etc.
+    - Transforming data does not really embody the data generation process. Better to match the modelling to the way the data was generated.
+- Incorporates **uncertainty**, dealing with uncertainty adds the complexity to models. 
+- *response = model = error*
+- Incorporates error (uncertainty)
+
+### What is the purpose of statistical modelling?
+
+- Describe relationships/effects
+    - Any evidence these effects occur above and beyond the noise in the system
+- Estimate effects
+    - Quantify the *magnitude* of effects.
+- Predict outcomes
+    - Lesser - fewer routines that do prediction properly.
+    - Low-dimensional so not great at predicting absolute reality.
+    - More for artificial intelligence - 'black boxes'
+
+### How do we estimate model parameters?
+
+$y_i = \beta_0 + \beta_1x_i$
+
+Specifying this will be a straight line. Two unknowns - what are there values?
+
+What criterion do we use to assess best fit?
+
+**Depends on how we assume y is distributed**
+
+If we assume $y_i$ is drawn from a normal (gaussian) distribution...
+
+- Ordinary Least squares **OLS**
+
+Estimation:
+
+- Parameters
+    - Location (mean)
+    - Spread(variance) - uncertainty
+- Can do iterively 
+- There is a closed form solution via matrix algebra
+
+Least squares estimates
+
+- Minimize sum of the squared residuals
+- Simple matrix algebra
+
+Provided data (and residuals): which is difficult in ecology...
+
+- **Gaussian**
+- **Equally varied**
+- **Independent** 
+    - Mean and variance must be independent
+    - Some interpret one sample to estimate mean and one for variance
+    - Realistically from one sample - no relationship between the mean and variance
+    - Blocking design, certain number of individuals measured overtime - NOT independent
+    
+#### Gaussian distribution
+
+Value you get as a result of infinite number of processes influencing value. Not just a single thing (i.e., water temperature)
+
+Can describe Guassian distribution by two parameters: mean (peak) and standard deviation (variance, how fat). Again, must be independent.
+
+$y_i = \beta_0 + \beta_1x_i + \epsilon_i$ determines the shape - linearity
+
+$\epsilon_i ~ N(0, \sigma^2)$ - normality
+
+### What if is not Guassian?
+
+Need a different distribution.
+
+**Measurement** e.g., length, weight
+
+usually guassian
+
+Density: both count and area -> logNormal
+
+Gamma:
+
+- Truncated at 0, cannot be < 0 
+- As it approaches 0, gets more skewed
+- Defined by two parameters - shape, scale $f(x | s, a)$
+- Can use to calculate mean and variance, but mean and variance ARE related
+    - $\mu = as, \sigma^2 = s\sigma^2$
+
+**Counts**
+
+Abundance
+
+- Number of fish on a transect across transects of same area
+
+Poisson:
+
+- Also has relationship between mean and variance (small - small, large - large).
+    - Mean = variance: $\mu = \sigma^2 = \lambda = df$
+    - Ratio of mean/variance = 1 : disperson $\theta (dispersion) = \mu \ \sigma^2$ 
+        - More variance than you would think based on the mean
+        - Overdispersed
+        - Model too simplistic to account for all the variance
+- Discrete
+- Formula only has single parameter to define shape $\lambda$ - both mean and variance (and degrees of freedom)
+
+Binomial distribution: coin flipping, how many tails
+
+Negative binomial: how tails you get before you flip a head
+
+- Aggregated data, when things clump together
+- Defined by mean (where is bump) and dispersion (how fat is bump)
+    - Works well for overdispersed Poisson
+- Always skewed toward 0
+    
+**Binary data**
+
+Presence/absence, coin flipping, dead/alive
+
+Two types:
+
+Bernoulli - single event, (0, 1), number of trials always 1
+Binomial - counting number of events, number of female joeys in litter
+    - also applies to ratio, proportions (bound)
+    
+**Percentages**
+
+Difficult because bound at both ends (0, 1)
+
+Beta:
+
+- Continuous between 0 and 1 (don't include though)
+
+## Generalized linear models
+
+$y_i = \beta_0 + \beta_1x_i + \epsilon_i$    
+$\epsilon = Dist(\mu, ...)$
+
+$g(\mu) = \beta_0 + \beta_1x_i + \epsilon_i$
+
+Random component
+
+$Y \sim Dist(\mu, ...)$
+$\mu = \beta_0 + \beta_1x$ 
+    - For any values could be -Inf to Inf, unbounded in any way
+    - Not true for Poisson, cannot be 0 or negative, bound 0 to Inf
+    - Link these two scales - log
+    
+Gaussian distribution is -Inf to Inf needs identiy link function (multiply by 1)
+
+Gamma bound from 0 to Inf
+    - Could use a log link
+    - Typically use inverse, but does not work well for ecological data
+  
+Binary data goes from 0 to 1. Bin(p, n), p = probability of n trials.
+    - Map back to -Inf to Inf
+    - Use the logit link function
+    
+Beta, proportions 0 to 1 bound
+    - Also uses logit link function
+
+Cannot sum up square of residuals like OLS only for Guassian.
+
+Need **Maximum Likelihood**
+
+What is the likelihood of our data coming from a particular distribution?
+
+x = 7, 8, 9
+y = 10, 11, 12
+
+$\mu$ = 10
+
+Plug in to equation to get $L(X|\theta)$. Want $x_i - \mu$ to be small to maximize L. Easy to calculate - plug and chug. Uses log-likelihood, easier to find maximum but is iterative. 
+
+#### Optimization
+
+- Most optimizers find minimums
+- Work with **negative log-likelihood**
+- Brute force - estimating two parameters (i.e., mean and variance). Good luck with >2 parameters.
+
+Clever options:
+
+- Simplex based **Nelder-Mead algorithm**
+    - Moving a triangle through the space and stretching to triangle corder closest to maximum 
+    - Better than gradient when more convoluted space
+- Derivative based **Newton-Raphson method**
+    - Gradient based
+- Stochastic global **Simulated Annealing**
+    - Adds some noise so samples parameters space a bit more
+    
+When dealing with non-gaussian, there is an engine underneath. Sometimes they don't work. Sometimes need to switch. 
+
+If does not converge best to change engine but can run more iterations, lessen sensitivity.
