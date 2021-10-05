@@ -32,6 +32,7 @@ A random variable is one whose **values depend** on a set of random events and a
 - Incorporates **uncertainty**, dealing with uncertainty adds the complexity to models. 
 - *response = model = error*
 - Incorporates error (uncertainty)
+- Residuals - difference between observed and expected
 
 ### What is the purpose of statistical modelling?
 
