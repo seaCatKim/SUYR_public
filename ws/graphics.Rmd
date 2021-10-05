@@ -51,11 +51,15 @@ Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(tidyverse) #for data wrangling
-library(grid)
+library(grid) # grids on plots
 library(patchwork)
-library(scales)
+library(scales) # manipulate color scales, transofmations
 library(gridExtra)
 ```
+
+Base graphics start with base graphics and add components. Isolated instructions to the device.
+
+ggplot built to follow structure and rules of graphics.
 
 Graphics infrastructure
 ========================
@@ -66,9 +70,14 @@ Graphics infrastructure
 - **faceting**
 - **themes**
 
+Scales also applies to colors, legends, etc.
+Faceting should be consistent.
+Overall theme, color scheme, font.
 
 Motivating data
 -----------------
+
+Biochemical Oxygen Demand built in data - Time (days) and demand (mg/l).
 
 ```{r, results='markup'}
 head(BOD)
@@ -85,6 +94,42 @@ Layers
     - **position** control
 
 ## geom_point
+
+Rmarkdown will embed plots into the document. Can change figure parameters in options.
+
+Can define fig.width and fig.height in chunk options. Also out.width in pixels. Why define both? Fonts, dots, etc. are in proportion to the zoom and out.width is the 'zoom' or scale. Also might want to specify resolution. For html, dpi = 72 is fine (lower dpi = smaller file size but NOT for printing). Word docs or standalone image (presentation, publications, etc.) much higher dpi like 600.
+
+```{r scatterplot of BOD, fig.width=5, fig.height=5, out.width=400, dpi = 300}
+ggplot(data = BOD, 
+       map = aes(y = demand, x = Time)) +
+  geom_point() +
+  geom_line()
+```
+```{r another ggplot}
+# OR
+g1 <- ggplot() +
+  geom_point(data = BOD, aes(y = demand, x = Time)) # first argument geoms expect is NOT data though, expects aes() first
+
+ggsave(filename = '../ws/outputs/figures/fig1.png', g1, width = 5, height = 5, dpi = 600)
+```
+
+> Follow golden ratio for aesthetically pleasing graphics.
+
+Use patchwork package for multiplots. Makes sure the axes line up!
+
+ggplot does not like multiplots... cowplots package tends to break. patchwork bit more stable.
+
+```{r patchwork}
+g2 <- ggplot() +
+  geom_line(data = BOD, aes(y = demand, x = Time))
+g2
+
+g1 + g2 # sideways 
+g1 / g2 # vertical facet
+g1 / (g2 + g1)
+
+(g1 + geom_line(data = BOD, aes(y = demand, x = Time, color = demand))) / (g2 + g1) # axes line up even with legend
+```
 
 Primary geometric objects
 ===========================
@@ -103,6 +148,7 @@ Primary geometric objects
 
 `geom_point`
 ------------
+
 
 `geom_smooth`
 ------------
