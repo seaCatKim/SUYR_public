@@ -42,7 +42,8 @@ bibliography: ../resources/references.bib
 ---
  
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler', 
+                      fig.width = 10, fig.height = 10)
 ```
 
 # Preparations
@@ -175,6 +176,19 @@ For GLM's there are numerous different residual formulations:
 | Response      | Raw residuals - difference between observed and expected    | `residuals(mod, "response")` |
 |               | These are only appropriate for Gaussian                     |                              |
 
+Standarized residuals from plot often *Pearson* residuals - resid/stdev.
+
+Partial residuals - residuals for a single variable holding all other variables constant
+
+Reponse - raw residuals - difference between observed and expected. Only appropriate for Gaussian.
+
+OLS - observed data (yi) trying to minimize residuals for prediction. Calculated *in* the model.
+Working residuals (glm) - can be calculated on any model. yi -> prediction -> residuals
+
+These two should be the same for a guassian model.
+
+## autoplot
+
 ```{r autoplot}
 polis.glm %>% autoplot(which = 1:6, label.repel = TRUE)
 ```
@@ -193,9 +207,13 @@ polis %>% mutate(n = 1:n()) %>%  # alt to n() can use nrow(.), '.' is dataset th
 
 Would expect ratio at 3 would not have the lizards. Decide if we want to remove or not. Adds more uncertainty. Also, makes it anti-conservative as in if the effect is still detected with this point shows the strength of the effect.
 
+## check_model
+
 ```{r check_model}
 polis.glm %>% performance::check_model()
 ```
+
+##DHARMa
 
 ```{r DHARMa}
 polis.resid <- polis.glm %>% 
@@ -204,7 +222,8 @@ polis.resid <- polis.glm %>%
 
 Conclude no evidence there is an issue that would invalidate our model.
 
-**Reminder** should make a statement that would put into the methods. 
+**Reminder** should make a statement that would put into the methods.
+
 # Partial plots {.tabset .tabset-faded}
 
 There are also numerous routines and packages to support these fitted trends
@@ -219,10 +238,123 @@ There are also numerous routines and packages to support these fitted trends
 | `ggeffects` | `ggemmeans()`              | Marginal means    | calls `emmeans()` |
 |             |                            |                   |                   |
 
+## plot model
+
+Bit jagged, not using 100 points like previous example. 
+
+Raw data is 0, 1s (presence/absence). Showing a back-transformation of the model of probability. Probability of lizards being present. As ratio decreases the ratio declines in a sigmoidal shape - happens when straight line is back-transformed. Fit a straight on our link/logit scale. Modeled not PA, but PA through logit function through binomial distribution.
+
+```{r plot model validation}
+polis.glm %>%  plot_model(type = 'eff', show.data = TRUE)
+```
+
+## allEffects
+
+In effects package for generating partial effects. `effects()` will give you plot of one effect. Uses base plot graphics.
+
+Blue modelled line is a straight line. There is an intercept and a slope.
+
+Pink is loess smoother on raw data.
+
+Pink circles is supposedly the data, but only had 0, 1s. 'residuals = TRUE' takes predicted value and adds residuals - here not using the correct residuals (see table) so ignore here. Reasonably good for anything but binomials.
+
+```{r allEffects}
+polis.glm %>% allEffects(residuals = TRUE) %>% 
+  plot()
+
+polis.glm %>% allEffects(residuals = TRUE) %>% 
+  plot(type = 'response') # transforms everything back on response scale, 0-1 here
+```
+
+## ggpredict()
+
+```{r ggpredict}
+polis.glm %>% ggpredict() %>% 
+  plot(add.date = TRUE, jitter = FALSE)
+```
+
+## emmeans
+
+```{r emmeans}
+polis.glm %>% ggemmeans(~RATIO) %>% 
+  plot(add.data = TRUE, jitter = FALSE)
+```
+
+All plots are similiar and should be.
+
+Expect to see some sort of negative relationship. Probability of lizards decreases as ratio increases.
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+Have an intercept of 3.6 which is on the log odds ratio scale.
 
+Odds ratio:
+
+Probatility of the lizard being present over probability of lizard being absent.
+
+$\log(\frac{p_i} {1-p_i}) = \beta_0 + \beta_1 x_i$
+
+Odds of something happenening compared to something that is not. 
+
+## Model summary
+
+```{r summary}
+polis.glm %>% summary()
+```
+
+## Back-transform intercept
+
+Lizard is 36x more likely to be present at low ratios.
+
+$p_i / 1-p_i$ -> $p_i$
+
+```{r backtransform from log-odds ratio}
+3.606 - 0.2196
+exp(3.606 - 0.2196) # log laws subtraction turs to division etc.
+
+exp(3.606) # this is log-odds back to odds ratio
+plogis(3.606)
+```
+
+97% chance you will find lizards on an island with a very small (0 ratio) island.
+
+Function staring with 'r' will give random draws for x distribution (t, norm, etc.)
+
+Function staring with 'p' will give probability x distribution (t, norm, etc.)
+
+```{r example }
+rt(10, 5)
+pt(10, 5)
+```
+
+Intercept hypothesis not that useful.
+
+## RATIO estimates
+
+RATIO test is significant.
+Is a rate - -0.2196 decline on a **link scale**.
+
+```{r exp RATIO estimate}
+exp(-0.2196)
+
+polis.glm %>% coef %>% exp
+
+36.8 * 0.8 # one change in island ratio unit
+```
+
+## Stats summary
+
+When island ratio is 0, lizards are 36x more likely to be present.
+
+For every one unit change in the island shape, the odds of lizards being present declines by 20% (1-0.8). Eventually, odds of lizards being present will diminish to close to 0. 
+
+## tidy CI
+
+```{r CI}
+polis.glm %>% tidy(conf.int = TRUE)
+
+polis.glm %>% tidy(conf.int = TRUE, exponentiate = TRUE) # on response scale
+```
 
 # Predictions {.tabset .tabset-faded}
 
@@ -238,29 +370,18 @@ calculated as:
 $$
 R^2 = 1 - \frac{\sum_i=1^N (y_i - \hat(y_i)^2)}{\sum_i=1^N (y_i - \bar(y))^2}
 $$
-where $y_{i}$ and $\hat{y_{i}}$ are the $i^{th}$ observed and predicted value
-respectively, $\bar{y}$ is the mean of the observed values and $N$ is the total
-number of observations.
+where $y_{i}$ and $\hat{y_{i}}$ are the $i^{th}$ observed and predicted value respectively, $\bar{y}$ is the mean of the observed values and $N$ is the total number of observations.
 
-This is really only appropriate for OLS.  For other models there are alternative
-measures (**psuedo R-squared**) that can be appled depending on how they are to
-be interpreted:
+This is really only appropriate for OLS.  For other models there are alternative measures (**psuedo R-squared**) that can be appled depending on how they are to be interpreted:
 
-1. **Explained variance**.  If we consider the numerator as a measure of the
-   unexplained variance and the denominator as a measure of the total variance,
-   then their one minus the ratio is the proportion of the variance explained by
-   the model.
-2. **Improvement of a fitted model over a null model**.  The numerator is a
-   measure of the variance unexplained after fitting the model and the
-   denominator is the amount of variance unexplained after fitting a null model
-   (model with only an intercept - essentially just the response mean).  The
-   ratio therefore reflects the improvement. 
-3. **Square of correlation**. The squared correlation between the predicted and
-   observed values.
+1. **Explained variance**.  If we consider the numerator as a measure of the unexplained variance and the denominator as a measure of the total variance, then their one minus the ratio is the proportion of the variance explained by the model.
+2. **Improvement of a fitted model over a null model**.  The numerator is a measure of the variance unexplained after fitting the model and the denominator is the amount of variance unexplained after fitting a null model (model with only an intercept - essentially just the response mean).  The ratio therefore reflects the improvement. 
+3. **Square of correlation**. The squared correlation between the predicted and observed values.
+
+These will be the same for OLS. For GLM's, need to decide how you are interpreting and will inform how you calculate it (see below table).
 
 There are many different ways to calculate $R^2$ values from GLM's.  The
-following table provides some guidance as to which method is appropriate for
-which type of model and how they should be interpreted..
+following table provides some guidance as to which method is appropriate for which type of model and how they should be interpreted..
 
 One very simple calculation is based on deviance (a measure of the
 total amount unexplained) as:
@@ -269,8 +390,7 @@ $$
 1-\frac{Deviance}{Deviance_{NULL}}
 $$
 
-where $Deviance_{NULL}$ is the deviance of a null model 
-(e.g. `glm(PA ~ 1, data=polis, family='binomial')`)
+where $Deviance_{NULL}$ is the deviance of a null model (e.g. `glm(PA ~ 1, data=polis, family='binomial')`)
 
 Alternatively, there are many different ways to calculate $R^2$ values
 from GLM's.  The following table provides some guidance as to which
@@ -296,20 +416,50 @@ $\S$: $R^2=\frac{1-(\frac{logL(0)}{logL(x)})^{2/N}}{1-logl(0)^{2/N}}$
 
 where $n_1$ and $n_0$ are the number of 1's and 0's in the response and
 $\hat{\pi}$ is the predicted probability. $logL(x)$ and $logL(0)$ are the
-log-likelihoods of the fitted and null models respectively and $N$ is the number
-of observations.
+log-likelihoods of the fitted and null models respectively and $N$ is the number of observations.
 
 Note, if you run `performance::r2()`, the function will work out what
 type of model has been fit and then use the appropriate function from
 the above table.
 
+## Deviance
+
+$R^2 = \frac{unexplained variation}{total variation}$
+
+For GLMS: 
+$R^2 = \frac{unexplained deviance}{total deviance}$
+
+Total amount unexlained comes from the null model.
+
+Useing the formula above, the model explains 46%. R2 was calculated by the deviance.
+
+```{r}
+1 - (polis.glm$deviance/polis.glm$null)
+```
+
+## Tjur $R^2$
+
+From the table: 
+
+More complex than the above. Implies the model is explaining about 52%. R2 was calculated using Tjur (REF).
+
+```{r Tjur R2}
+polis.glm %>% performance::r2_tjur()
+```
+
+## Nagelkirk
+
+Never use adjusted. Adjustments 'out there' for small sample size and elevates $R^2$. Take the smaller of the $R^2$ to be conservative.
+
+$R^2$ = 0.47
+
+```{r MuMIn}
+polis.glm %>% MuMIn::r.squaredLR()
+```
 
 ## LD50
-In some disciplines it is useful to be able to calculate an LD50.  This is the
-value along the x-axis that corresponds to a probability of 50% - e.g. the
-switch-over point in Island perimeter to area Ratio at which the lizards go
-from more likely to be present to more likely to be absent.  It is the
-inflection point.
+
+In some disciplines it is useful to be able to calculate an LD50.  This is the value along the x-axis that corresponds to a probability of 50% - e.g. the switch-over point in Island perimeter to area Ratio at which the lizards go from more likely to be present to more likely to be absent.  It is the inflection point.
 
 It is also the point at which the slope (when back-transformed) is at its
 steepest and can be calculated as:
@@ -317,6 +467,29 @@ steepest and can be calculated as:
 $$
 -\frac{Intercept}{Slope}
 $$
+
+```{r calculate LD50}
+polis.glm %>% coef()
+polis.glm$coefficients
+polis.glm$coef[1]
+polis.glm$coef[2]
+-polis.glm$coef[1]/polis.glm$coef[2]
+```
+
+LD50 (inflection point) corresponds to a RATIO of 16.4.
+
+Only applies on the link scale. Don't back-transform.
+
+Might want to know other LDs. Would also be nice to have CIs. 
+
+There is a function to do this in MASS - old package in S.
+
+```{r other LDs, CIs}
+ld <- polis.glm %>% MASS::dose.p(p = c(0.5, 0.9))
+
+
+```
+
 
 # Summary figures {.tabset .tabset-faded}
 
