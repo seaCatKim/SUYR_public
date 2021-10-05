@@ -102,8 +102,23 @@ polis = read_csv('../data/polis.csv', trim_ws=TRUE)
 glimpse(polis)
 head(polis)
 str(polis)
+summary(polis)
 ```
 
+Response: PA - presence/absence
+Predictor: Ratio - island perimeter to area
+Bernoulli - special case of binomial
+
+For number of female joeys:
+dataframe would be 'RATIO, FEMALE, TOTAL-FEMALE'
+glm(cbind(Females, Total-Female) ~ formula)
+
+Need the positives and the negatives.
+
+$$
+PA_i \sim Bin(p_i, 1) \\
+log\frac{p_1}{1-p_i} = \beta_0 + \beta_1 x
+$$
  
 # Exploratory data analysis
 
@@ -118,8 +133,18 @@ trials (in the case of logistic, this is always 1), $p_i$ represents the
 probability of lizards being present in the $i^{th}$ population, and $\beta_0$
 and $\beta_1$ represent the intercept and slope respectively.
 
+```{r scatterplot}
+ggplot(polis, aes(x = RATIO, y = PA)) +
+  geom_point()
+```
+
 
 # Fit the model {.tabset .tabset-faded}
+
+```{r fit a binomial glm}
+polis.glm <- glm(PA ~ RATIO, family = binomial(link='logit'), data = polis)
+```
+
 
 # Model validation {.tabset .tabset-faded}
 
@@ -150,9 +175,36 @@ For GLM's there are numerous different residual formulations:
 | Response      | Raw residuals - difference between observed and expected    | `residuals(mod, "response")` |
 |               | These are only appropriate for Gaussian                     |                              |
 
+```{r autoplot}
+polis.glm %>% autoplot(which = 1:6, label.repel = TRUE)
+```
 
+Because logistic regression - residuals don't mean anything. Why DHARMa exists.
+Q-Q looks good.
+Cook's - row 3 more influential than others > 0.8
 
+One grain of doubt model might be okay. Good to get more information about row 3. 
 
+```{r mutate to get row 3 and plot}
+polis %>% mutate(n = 1:n()) %>%  # alt to n() can use nrow(.), '.' is dataset that piping sent
+  ggplot(aes(x = RATIO, y = PA)) +
+  geom_text(aes(label = n))
+```
+
+Would expect ratio at 3 would not have the lizards. Decide if we want to remove or not. Adds more uncertainty. Also, makes it anti-conservative as in if the effect is still detected with this point shows the strength of the effect.
+
+```{r check_model}
+polis.glm %>% performance::check_model()
+```
+
+```{r DHARMa}
+polis.resid <- polis.glm %>% 
+  simulateResiduals(plot = TRUE)
+```
+
+Conclude no evidence there is an issue that would invalidate our model.
+
+**Reminder** should make a statement that would put into the methods. 
 # Partial plots {.tabset .tabset-faded}
 
 There are also numerous routines and packages to support these fitted trends
