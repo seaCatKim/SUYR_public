@@ -358,7 +358,7 @@ dat.1 %>% summarize(MeanResp1 = mean(Resp1),
                     SEM = SE(Resp1))
 ```
 
-#across() versions of summarize()
+# across() versions of summarize()
 
 ```{r summarize mean using across}
 dat.1 %>%  summarize(across(c(Resp1, Resp2),
@@ -727,12 +727,12 @@ Steps:
 1. Fix typo
 2. Pivot to longer - much easier to sum columns than rows.
 3. Convert abundance (length in cm of a 10m transect containing the species)
-  + Cover = Abundance / 1000 (proportions)
-  + Cover = Cover x 100 (%)
-  + so Cover = Abundance / 10
+    + Cover = Abundance / 1000 (proportions)
+    + Cover = Cover x 100 (%)
+    + so Cover = Abundance / 10
 4. Isolate genera
 5. Filter to Acropora
-6. Summ all Acropora per year, site
+6. Sum all Acropora per year, site
 7. Summarize per year
 
 ```{r tikus example Acropora}
