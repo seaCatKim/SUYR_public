@@ -508,8 +508,15 @@ Do not need all info:
 - CI or SE, related
 - if estimate and SE don't need z.ratio
 
-$R^2$
+```{r catepillar plot for cmat}
+ggplot(cmat.m, aes(y = contrast, x = estimate)) +
+  geom_pointrange(aes(xmin = asymp.LCL, xmax = asymp.UCL)) +
+  geom_vline(xintercept = 0, color = 'blue', linetype = 'dashed') +
+  theme_classic()
+```
 
+
+$R^2$
 ```{r MuMIn R^2}
 day.glmP %>% MuMIn::r.squaredLR()
 ```
