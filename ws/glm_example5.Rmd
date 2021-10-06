@@ -71,13 +71,7 @@ library(scales)    #for more scales
 
 # Scenario
 
-Here is a modified example from @Quinn-2002-2002. Day and Quinn (1989) described
-an experiment that examined how rock surface type affected the recruitment of
-barnacles to a rocky shore. The experiment had a single factor, surface type,
-with 4 treatments or levels: algal species 1 (ALG1), algal species 2 (ALG2),
-naturally bare surfaces (NB) and artificially scraped bare surfaces (S). There
-were 5 replicate plots for each surface type and the response (dependent)
-variable was the number of newly recruited barnacles on each plot after 4 weeks.
+Here is a modified example from @Quinn-2002-2002. Day and Quinn (1989) described an experiment that examined how rock surface type affected the recruitment of barnacles to a rocky shore. The experiment had a single factor, surface type, with 4 treatments or levels: algal species 1 (ALG1), algal species 2 (ALG2), naturally bare surfaces (NB) and artificially scraped bare surfaces (S). There were 5 replicate plots for each surface type and the response (dependent) variable was the number of newly recruited barnacles on each plot after 4 weeks.
 
 ![Six-plated barnacle](../resources/barnacles.jpg){width="224" height="308"}
 
@@ -99,10 +93,40 @@ S       12
 **BARNACLE**   The number of newly recruited barnacles on each plot after 4 weeks.
 -------------- ----------------------------------------------------------------------------------------------------------------------------------------------
 
+Classic ANOVA with 4 treatments and a response.
+
+Count so Poisson distribution.
+
+$$
+y_i \sim P(\lambda_i)\\
+\log(\lambda_i) = \beta_0 + \beta_i
+)
+$$
+
+Treatments are factors and need to dummy code the levels as numbers.
+
+$$
+y_i \sim P(\lambda_i)\\
+\log(\lambda_i) = \beta_0 + \beta_1T_1 + \beta_2T_2 + \beta_3T_3 + \beta_4T_4
+$$
+
+5 parameters to estimate with 4 variables - multiple regression. $\beta$ is estimating the mean which is not very useful.
+
+Set $\beta_0$ as intercept of T1.
+
+$$
+\log(\lambda_i) = \beta_0 + \beta_1T_1 + \beta_2T_2 + \beta_3T_3 + \beta_4T_4\\
+= T1 + (T2-T1) + (T3-T1) + (T4-T1)
+$$
+
+Group levels decided alphabetically. All other estimates rely on intercept estimate.
+
+Choose the level with the most data for the intercept.
+
 # Read in the data
 
 As we are going to treat Treatment as a categorical predictor, we will
-specifically declare it as such straight after importing the data.
+specifically declare it as such straight after importing the data. Categorical factors have a number.
 
 ```{r readData, results='markdown', eval=TRUE}
 day = read_csv('../data/day.csv', trim_ws=TRUE)
@@ -111,8 +135,11 @@ day <- day %>%
   mutate(TREAT = factor(TREAT))
 ```
 
+# Exploratory data analysis {.tabset .tabset-faded}
 
-# Exploratory data analysis
+Do we need to assess normality? **No** assuming Poisson distribution.
+
+homogeneity of variance? **No** assume mean = variance.
 
 Model formula:
 $$
@@ -120,32 +147,296 @@ y_i \sim{} \mathcal{Pois}(\lambda_i)\\
 \mu_i = \boldsymbol{\beta} \bf{X_i}
 $$
 
-where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
-model matrix representing the intercept and treatment contrasts for the effects
-of Treatment on barnacle recruitment.
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the intercept and treatment contrasts for the effects of Treatment on barnacle recruitment.
  
+## Boxplot
+
+```{r boxplot}
+ggplot(day, aes(y = BARNACLE, x = TREAT)) +
+  geom_boxplot() +
+  geom_point(color = 'red')
+```
+ 
+## Violin plot
+
+```{r violin plot}
+ggplot(day, aes(y = BARNACLE, x = TREAT)) +
+  geom_violin() +
+  geom_point(color = 'red')
+```
+
+Poisson is discrete and somewhat skewed toward 0. Mean of 50, normal distribution would approximate fairly well.
+
+Will fit both Gaussian and Poisson models as GLMs to demonstrate.
 
 # Fit the model
 
+Could use 'gaussian(link = 'log')' instead of log(BARNACLE) and response has 0s.
+
+```{r gaussian}
+day.glm <- glm(BARNACLE ~ TREAT, data = day, family = 'gaussian') 
+```
+
+Poisson must give integers.
+
+```{r poisson}
+day.glmP <- glm(BARNACLE ~ TREAT, data = day, family = poisson(link = 'log'))
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## Autoplot poisson model
+
+Two plots we are missing here are meaningless for categorical predictors.
+
+Residuals - for categorical data, don't want different spread of dots for different levels. For example, one level is below the line, another above the line. Want spead across 0.
+
+Q-Q - following the line. Good.
+
+Bottom 2 - deviance residuals. Expressing residuals in different ways showing similar patterns.
+
+No Cook's D or leverage. Cannot be an outlier along the x-axis with only categorical predictor. In a level or not. 
+
+```{r autoplot poisson}
+day.glmP %>% autoplot()
+```
+
+## check_model
+
+```{r}
+day.glmP %>% performance::check_model()
+```
+
+## DHARMa
+
+Very useful.
+
+```{r dharma}
+day.resids <- day.glmP %>% simulateResiduals(plot = TRUE)
+```
+
+Can specifically target dispersion test. Assume $\mu = \sigma^2$.
+
+If p-value < 0.05 then over/under dispersed.
+
+```{r test dispersion}
+day.resids %>% testDispersion()
+```
+
+Crude calculation of dispersion. Assume it is one. What is it actually?
+
+variance / mean = dispersion = 1. Can use dfs
+
+Dispersion is very close to 1 (1.08). Over 3 is bad.
+
+```{r calculate dispersion}
+day.glmP$deviance/day.glmP$df.residual
+```
+
+Underdispersion is more of an artefact and harder to deal with.
+
+Diagnostics look good.
 
 # Partial plots {.tabset .tabset-faded}
 
+## plot_model
+
+Has back-transformed predictions onto the reponse scale by default.
+
+Bare surfaces have less recruits than biofilm surfaces.
+
+Black dot is model mean and gray dots are raw data.
+
+```{r plot_model}
+day.glmP %>% plot_model(type = 'eff', show.data = TRUE)
+```
+
+## ggemmeans
+
+Marginal effect, back-transformed onto the response scale.
+
+Black dot is model mean and gray dots are raw data.
+
+```{r ggemmeans}
+day.glmP %>% ggemmeans(~ TREAT) %>%
+  plot(add.data = TRUE, jitter = FALSE)
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+## Gaussian summary
 
-# Predictions {.tabset .tabset-faded}
+Easier to relate to figure.
+
+Intercept: 22.4, mean of first group ALG1. p-value means nothing for Intercept!
+TREATALG2: 6.0, different between Intercept. p-value is significant, evidence of effect of algae type on recruitment.
+TREATNB: -7.4 fewer than ALG1
+TREATS: -9.2, fewer than ALG1
+
+Could make same assessment of significant of treatments based on confidence intervals.
+
+```{r gaussian summary}
+day.glm %>% summary()
+```
+
+## Poisson summary
+
+Intercept: 3.1, mean of first group on log-link scale
+TREATALG2: 0.23, difference on the log-link scale
+  - additive on the link scale
+  - when back-transformed is mutiplicative
+  - 1.27 is a 27% increase on ALG2 than ALG1
+  - for Poisson model, p-value is not significant
+TREATNG: -0.401, subtract from one to talk about % reduction
+
+```{r poisson summary}
+day.glmP %>% summary()
+
+exp(3.1) # Intercept back-transformed to response scale
+exp(0.237) # fold difference
+exp(3.109 + 0.237) # value of ALG2 mean, additive on the link scale
+exp(3.109) + exp(0.237)
+exp(-0.401) # NB prediction, whatever % reduction
+```
+## Tidy CIs
+
+Estimates on fold scale - back-transformed.
+
+Concluding on hypothesis test based on CIs:
+On link scale - intervals not including 0 is significant.
+
+TREATNB and TREATS are significant.
+
+```{r link-scale}
+day.glmP %>% tidy(conf.int = TRUE)
+```
+
+Back-transformed - log(0) = 1, interested in CIs that do not span 1.
+
+TREATNB and TREATS are significant.
+
+```{r back-transformed}
+day.glmP %>% tidy(conf.int = TRUE, exponentiate = TRUE)
+```
+
+Only know about some comparisons here - ALG1 compared to everything else.
+
+Techniques:
+
+1. Pairwise comparisons - compare everything after fitting the model.
+2. Planned comparisons/contrasts - target specific set of comparisons.
+
+Advantages and disadvantages of both.
+
+Had fit model with *treatment contrasts*. Comparing ALG1 to other treatments.
+
+Can apply other contrasts.
+
+Sum contrasts - will make $\beta_0$ overall mean and other things will be compared to overall mean.
+Helment contrasts...
+Polynomial contrasts...
+
+Can slice the pie a particular way to suit question - planned comparisons.
+
+Any one hypothesis ($\alpha = 0.05$) accepting 5% chance might be making an error. Two hypothesis test starts to compound - increase Type I error rate (chances of a false rejection). Need to control for this.
+
+Tukey's test - adjust df of each test down to protect the family-wise Type I error rate to be $\alpha = 0.05$. Dropping df, lose power. Allows us to compare every group to every other group at a cost. Proportional to number of groups.
 
 
 ## Post-hoc test (Tukey's)
 
+Default is Tukey's, says in output. Output in response scale.
 
-## Planned contrasts
+ALG1 / ALG2: in opposite order than summary. p-value is increased which highlights lost power with Tukey's test.
+ALG1 / NB: ALG1 1.493x higher than NB
 
-Define your own
+```{r poisson model}
+day.glmP %>% emmeans(~ TREAT, type = 'response') %>% 
+  pairs()
+```
+
+Back-transformed so intervals of interest do not have 1.
+
+All talking about multiplying differences. Useful for talking about percentage change. 
+
+ALG1 is 49% higher than NB, 70% higher than S.
+
+Not great for talking about absolutes. Only been able to do relatively recently and requires a trick that is not very stable. 
+
+Back-transformed then comparison is done so is on factor (log-link) scale.
+
+```{r poisson model w CI}
+day.pair <- day.glmP %>% 
+  emmeans(~ TREAT, type = 'response') %>% 
+  pairs() %>% 
+  summary(infer = TRUE) # adds CI
+day.pair
+```
+
+Use regrid to get flexibility of when you want back-transform to occur.
+
+Here back-transformed before pariwise comparison so table is in absolute scale.
+
+Estimate is -6 barnacles in ALG1 vs ALG2.
+
+CI significance is 0.
+
+```{r poisson model regrid w CI}
+day.pair.regrid <- day.glmP %>% 
+  emmeans(~ TREAT) %>% # getting means
+  regrid() %>% # back transforming mean, uncertainties not trivial
+  pairs() %>% # doing pairwise comparison on absolute scale
+  summary(infer = TRUE) # adds CI
+day.pair.regrid
+```
+
+# Summary figures {.tabset .tabset-faded}
+
+## Absolute difference
+
+```{r plot pairwise - mine}
+ggplot(day.pair.regrid, aes(x = estimate, y = contrast)) +
+  geom_errorbar(aes(xmin = asymp.LCL, xmax = asymp.UCL), width = 0.2) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype="dotted", 
+                color = "blue") +
+  scale_y_discrete(expression(Pairwise~comparisons)) +
+  scale_y_discrete(expression(Estimate)) +
+  theme_classic()
+```
+
+```{r Murrays plot}
+g1 <- day.pair.regrid %>% 
+  ggplot() +
+  geom_pointrange(aes(x = estimate, y = contrast, 
+                     xmin = asymp.LCL, xmax = asymp.UCL)) +
+#  coord_flip() +
+  geom_vline(xintercept = 0, linetype = 'dashed') +
+  theme_bw()
+g1
+```
+
+Normal table back transforamtion from log-link does occur - 0 ns
+Contrast before back-transform - 1 ns
+Contrast after back-transform - 0 ns
+
+Tukey's comparing everything to everything else and losing power.
+
+# Planned contrasts
+
+Have a pie that is the same size. Cannot make it bigger or smaller, just 
+Define your own how you slice the pie.
+
+Original model can estimate 3 things (number of groups -1) and an intercept.
+
+All must be independent.
+
+A, B, C, D
+
+Can make 3 comparisons, could do less and will add in to fill.
+A, B    A > B
+B, C    B > C, we know then A > C, not an independent comparison
+A, D
 
 Compare:
 
@@ -153,8 +444,116 @@ a) ALG1 vs ALG2
 b) NB vs S
 c) average of ALG1+ALG2 vs NB+S
 
+TREAT   ALG1 v ALG2   NB v S    ALG v bare
+------- -----------   -------   ----------
+ALG1    -1            0         1/2
+..      ..            ..        ..
+ALG2    1             0         1/2        
+..      ..            ..        ..
+NB      0             1         -1/2
+..      ..            ..        ..
+S       0             -1        -1/2
+..      ..            ..        ..
 
-# Summary figures {.tabset .tabset-faded}
+1/2 because 1 divided by 2 types of algae and 2 types of bare substrate.
 
+```{r construct contrast matrix}
+cmat <- (cbind('Alg1_Alg2' = c(-1, 1, 0, 0),
+               'NB_S' = c(0, 0, 1, -1),
+               'Alg_Bare' = c(0.5, 0.5, -0.5, -0.5)))
+cmat
+```
+
+Check independence by calculating the cross products.
+
+If 2 contrasts are independent, sum of product should be 0. Upper/lower diagonal are 0s.
+
+If not independent (not 0 and orthogonal) must exclude.
+
+```{r cross product}
+crossprod(cmat)
+```
+
+Include contrast matrix in emmeans:
+
+ALG1-ALG2 ratio is the same as original summary table.
+
+NB-S was done in Tukey's test but here have full power.
+
+All ALG and all bare contrast only in this summary. 79% more recruitment on algal surfaces than bare surfaces. 1.79 fold difference.
+
+Back-transformation is after the contrast - interval of concern is 1.
+
+```{r emmeans with cmat}
+day.glmP %>% emmeans(~ TREAT, type = 'response') %>% 
+  contrast(method = list(TREAT = cmat)) %>% # for TREAT variable use cmat matrix to define contrasts
+  summary(infer = TRUE) # summarize for p-values and CI
+```
+
+Contrast after back-transform, interval of significance is 0.
+
+```{r emmeans cmat regrid}
+cmat.m <- day.glmP %>% emmeans(~ TREAT, type = 'link') %>% 
+  regrid() %>% 
+  contrast(method = list(TREAT=cmat)) %>% 
+  summary(infer = TRUE)
+cmat.m
+```
+
+Can use this output as your main table.
+
+Do not need all info: 
+
+- estimate
+- CI or SE, related
+- if estimate and SE don't need z.ratio
+
+$R^2$
+
+```{r MuMIn R^2}
+day.glmP %>% MuMIn::r.squaredLR()
+```
+
+Do either pairwise or planned comparisons.
+
+# Predictions {.tabset .tabset-faded}
+
+Don't need predict grid because it is categorical so levels are defined.
+
+```{r predict}
+newdata <-  day.glmP %>% emmeans(~TREAT, type = 'response') %>% 
+  as.data.frame()
+
+g2 <- ggplot(newdata, aes(y = rate, x = TREAT)) +
+  geom_pointrange(aes(ymin = asymp.LCL, ymax = asymp.UCL)) +
+  theme_bw()
+g2
+```
+
+## Plot
+
+```{r plot prediction and Tukeys contrasts}
+g2 + g1
+g1 + ggtitle('a)')
+(g1 + ggtitle('a)')) + (g2 + ggtitle('b)'))
+g1 + geom_text(x = -Inf, y = Inf, label = 'a)', 
+               vjust = 1.1, hjust = -0.05) +
+  g2 + geom_text(x = -Inf, y = Inf, label = 'b)', 
+               vjust = 1.1, hjust = -0.05)
+```
+
+# Statistical methods section
+
+The effect of substrate type on the recruitment of barnacles was explored using generalized linear models (Poisson, log-link). 
+
+**Planned contrasts**
+Specific contrasts were defined to further explore the differences in recruitment between the two algal substrates, the two bare substrates as well as the algal and bare substrates.
+
+> Typically just present planned comparisons. Admitting you didn't want the original contrasts. Would just show planned contrasts table. Discuss an R2 value.
+
+**Tukey's**
+Pairwise compmarisons between all substrate types using a Tukey's test...
+
+> Generally discuss the original model and Tukey's further explores.
 
 # References
