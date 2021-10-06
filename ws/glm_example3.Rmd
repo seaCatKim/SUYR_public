@@ -69,10 +69,9 @@ library(tidyverse) #for data wrangling
 
 # Scenario
 
-Here is a modified example from @Peake-1993-269.  @Peake-1993-269 investigated
-the relationship between the number of individuals of invertebrates living in
-amongst clumps of mussels on a rocky intertidal shore and the area of those
-mussel clumps.
+Here is a modified example from @Peake-1993-269.  @Peake-1993-269 investigated the relationship between the number of individuals of invertebrates living in amongst clumps of mussels on a rocky intertidal shore and the area of those mussel clumps.
+
+Not about the mussels themselves, but the community mussel clumps support.
 
 ![](../resources/mussels.jpg)
 
