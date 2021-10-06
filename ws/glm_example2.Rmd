@@ -353,7 +353,8 @@ For every one unit change in the island shape, the odds of lizards being present
 ```{r CI}
 polis.glm %>% tidy(conf.int = TRUE)
 
-polis.glm %>% tidy(conf.int = TRUE, exponentiate = TRUE) # on response scale
+polis.glm %>% tidy(conf.int = TRUE, exponentiate = TRUE) %>% # on response scale
+  knitr::kable()
 ```
 
 # Predictions {.tabset .tabset-faded}
@@ -484,12 +485,62 @@ Might want to know other LDs. Would also be nice to have CIs.
 
 There is a function to do this in MASS - old package in S.
 
+Gives dose and SE - can calculate CI from SE. CI ~ 2 * SE ~ 95%
+
 ```{r other LDs, CIs}
 ld <- polis.glm %>% MASS::dose.p(p = c(0.5, 0.9))
+ld # hard to extract values
 
+ld.SE <- attr(ld, 'SE') # extracting attributes
+ld.SE
 
+lds <- data.frame(LD = attr(ld, 'p'),
+                  Dose = as.vector(ld),
+                  SE = ld.SE) %>% 
+  mutate(lower = Dose - SE * qnorm(0.975), # quantile of normal dist
+         upper = Dose - SE * qnorm(0.975))
+
+qnorm(0.975) # number of SE is 95% confidence interval
 ```
 
+What shape island for RATIO 0.75?
+
+```{r other LDs, CIs, with .75}
+ld <- polis.glm %>% MASS::dose.p(p = c(0.5, 0.9, 0.75))
+ld # hard to extract values
+
+ld.SE <- attr(ld, 'SE') # extracting attributes
+ld.SE
+
+lds <- data.frame(LD = attr(ld, 'p'),
+                  Dose = as.vector(ld),
+                  SE = ld.SE) %>% 
+  mutate(lower = Dose - SE * qnorm(0.975), # quantile of normal dist
+         upper = Dose - SE * qnorm(0.975))
+lds
+```
+
+For 90, lower is negative because of symmetric CI. +/- 2 SE of Dose. Turn negative to 0. Can't have negative ratio.
+
+# Statistical methods section
+
+The relationship between presence/absence of Uta lizards on the California Gulf Islands and the island perimeter to area ratio was explored using a logistic (implied in pres/abs) generalized linear model (logit-link)
+
+$R^2$ values were calculated based on Tjur's method (REF).
+
+All model and graphs were performed in R4.0.4 (R Core Team, 2021)
+
+Assumed you will check model validation - can put in supplementary.
+
+> Model checks were performed using DHARMa...
+
+## Citing packages
+
+Need to cite the statistical method which is sometimes the package documentation.
+
+`performance::r2_tjur` for documentation just Reference listed.
+
+GLMs been around so long don't need to reference. More complicated model should be referenced.
 
 # Summary figures {.tabset .tabset-faded}
 
@@ -517,6 +568,50 @@ again to binomial.
 
 In this case, since we just have a single predictor, we might as well
 just add the raw data.
+
+1. Grid of values between range of RATIO values. 
+
+```{r make grid}
+polis.grid <- with(polis, list(RATIO = seq_range(RATIO, n = 100)))
+```
+
+emmeans considers everything as categorical. So even though RATIO is continuous, only gives one value.
+
+`at = polis.grid` gives predicted emmean for whole grid.
+
+```{r emmean}
+polis.glm %>% emmeans(~ RATIO) %>% # gives one thing
+  head()
+```
+
+2. Predict across grid of ratio values.
+
+```{r predict for polis grid}
+polis.glm %>% emmeans(~ RATIO, at = polis.grid) %>% head() # values on logit scale
+```
+
+Provides CI asymp.LCL (lower), asymp.UCL (upper). Cannot calculate dfs. - complex issue. Mass disagreement as to how should be calculated.
+
+Does not know dfs so assume Inf sample size. Do not rely on estimates of degrees of freedom that are hard to justify.
+
+3. Back-transform to response scale.
+
+```{r predict and transform back to response}
+polis.glm %>% emmeans(~ RATIO, at = polis.grid, type = 'response') %>% 
+  as.data.frame() -> newdata  # output as a dataframe to pot
+newdata
+```
+
+```{r plot}
+ggplot(newdata, aes(x = RATIO, y = prob)) +
+  geom_ribbon(aes(ymin = asymp.LCL, ymax = asymp.UCL),
+              fill = 'blue', alpha = 0.2) +
+  geom_line() +
+  geom_point(data = polis, aes(x = RATIO, y = PA), size = 2) +
+  scale_y_continuous(expression(Presence~or~Absence)) +
+  scale_x_continuous(expression(Island~Perimeter~to~Area~Ratio)) +
+  theme_classic()
+```
 
 # References
 
