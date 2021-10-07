@@ -299,18 +299,246 @@ Effect of DENSITY in the summer but not in the other seasons.
 quinn.nb %>% plot_model(type = 'eff', terms = c('SEASON', 'DENSITY')) # put both variables on the one graph to see interaction
 ```
 
+This plot is just giving first level of Density: a **conditional** plot. Same as red lines in previous plot. Not averaged over DENSITY.
+
+`ggpredict()` is always conditional - need to define parameters.
+
+```{r conditional season plot}
+quinn.nb %>% ggpredict(c('SEASON')) %>% plot()
+```
+
+Marginalized plot over DENSITY.
+
+emmeans awalsy marginal.
+
+```{r marginal}
+quinn.nb %>% ggemmeans(c('SEASON')) %>% plot()
+```
+
+Interaction is the same. 
+
+```{r plot interaction}
+quinn.nb %>% ggemmeans(~ SEASON * DENSITY) %>% plot()
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+ANOVA told us effect of SEASON and an interaction. 
+
+> ANOVA bit obsolete. Stems from having to push a button.
+
+Here we can get same information plus a lot more.
+
+Look at interactions first.
+    - DENSITY effect is different in Summer than in Spring-High (first level).
+    - Do not just describe main effects. 
+    
+> If no significant interactions - can you run the model with just additive fixed effects?
+- Frequentist: Can to save df. Trade off between reduce unexplained variability versus saving df.
+- Bayesian: Leave in because there is no df and will reduce unexplained variability.
+
+## Model summary - link scale
+
+```{r model summary}
+quinn.nb %>% summary()
+```
+
+## Tidy summary 
+
+Intercept 10 - rounded number of recruits in Spring-High.
+DENSITYLow - 1.12 fold difference to intercept. 12% increase.
+SEASONSummer - for High Density, 4.82 fold increase, 382% change.
+
+```{r back transformed summary}
+quinn.nb %>% tidy(conf.int = TRUE, exponentiate = TRUE) # back transform
+```
+
+For interactions, split variables apart. Captured within the same analysis is okay.
+
+- Is there a seasonal effect for High? Low?
+- Is there a density effect in Spring? Summer? 
+
+Could filter data just for Spring and do a t-test for all seasons, but you don't. Tests are based on unexplained variability. So if you filter out data have greater variability and lower df. Still want to do it within the one analysis to keep the df. Within the context of the full model to have the power of the full model.
+
+# Further analysis
+
+emmeans estimate marginal means for DESNTIY separate for each season. Follow through to pairswise comparisons.
+
+On log scale. Back to factor scale put 'type = 'response'' - fold factor representation.
+
+Summer High/Low - High is 2.19 fold, 119% higher, evidence of effect from  significant p-value
+Autumn High/Low - 1.08 fold, 8% higher
+Winter High/Low - 2.12 fold, 112$ higher
+
+```{r }
+eff <- quinn.nb %>% emmeans(~ DENSITY|SEASON, type = 'response') %>% 
+  pairs() %>% 
+  summary(infer = TRUE) %>% 
+  as.data.frame()
+eff
+```
+
+Ratio scale not really fair to left side of 1 - very much skewed to positive effects downplaying the negative effects.
+
+consider scaling x axis so it is more symmetrical.
+
+Also, pseudo log scale if want to log-scale axis including 0.
+
+> For log transforming predictors use lowest value divided by half. Don't want super small number otherwise will be an outlier.
+
+```{r catepillar plot season}
+ggplot(eff, aes(x = ratio, y = SEASON)) + 
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  geom_linerange(aes(xmin = asymp.LCL, xmax = asymp.UCL)) +
+  geom_point() +
+  scale_y_discrete(name = '')  + # no lable needed bc seasons are descriptive
+  scale_x_continuous(name = 'Density effect (High vs Low)',
+                     trans = scales::log2_trans(),
+                     breaks = scales::breaks_log(base = 2)) +
+  geom_text(aes(label = sprintf("p=%.2f", p.value)), # sprintf from C, like a paste/quote, %.2 - format w 2 decimals, f - float, formatting the p.value from model
+            nudge_y = 0.25) + # nudge off the point
+  theme_classic() -> p.seas
+
+p.seas
+
+log2(2)
+log2(.5)
+```
+
+What is the difference between Summer High/Low on an absolute scale?
+
+Can do both and discuss:
+
+The difference between Summer High/Low was 26 which represents an X fold/X percent change.
+
+Table or figure. Catepillar plots, etc. 
+
+```{r}
+season.eff <- quinn.nb %>% emmeans(~ DENSITY|SEASON, type = 'link') %>% 
+  regrid() %>% # back transform before pairs() comparison
+  pairs() %>% 
+  summary(infer = TRUE) %>% 
+  as.data.frame()
+season.eff
+```
 
 # Predictions
 
+```{r}
+newdata <-emmeans(quinn.nb, ~ DENSITY | SEASON, type = 'response') %>% 
+  as.data.frame()
+head(newdata)
+```
+
+## Interaction plot
+
+'shape = DENSITY' outside of `aes()` need to specify shape number and will not change with levels of DENSITY.
+
+Two ways of distinguishing things - don't have to worry about color-blind friendly etc. 
+
+```{r season density interaction plot}
+ggplot(newdata, aes(x = SEASON, y = response, fill = DENSITY)) + # fill will only do point shape with area to fill
+  geom_pointrange(aes(ymin = asymp.LCL, ymax = asymp.UCL, 
+                      shape = DENSITY), # shape in aes() has a scale
+                  position = position_dodge(width = 0.2)) +
+  scale_shape_manual(values = c(21, 22)) + # change scale of shape to fillable shape
+  theme_classic() -> ip
+```
+
+Add annotations:
+
+Automatically puts * in the middle of Summer. 
+
+Not recommned to star significance by Murray. Catepillar plot is better
+```{r annotation}
+ip +
+  annotate(geom = 'text', x = 'Summer', y = 70, label = '*', size = 7) -> ip
+ip
+```
+
 
 # Summary figures
-As these summarise only involve categorical predictors, there is no need to
-define a prediction grid.  For categorical predictors, the default grid will
-assume that you are interested in all the levels of the categorical predictors.
 
+As these summarise only involve categorical predictors, there is no need to define a prediction grid.  For categorical predictors, the default grid will assume that you are interested in all the levels of the categorical predictors.
+
+```{r}
+(ip + ggtitle('a)')) + (p.seas + ggtitle('b)'))
+```
+
+Traditionally, plot on left would be bar graph with shaded bar - dynamite plot'. Dangerous because only top of bar has meaning.
+
+# Investigatin zero inflated models w simple example
+
+glmmTMB
+mm - mixed effects
+TMB - template model builder, depending on package
+
+Very flexible package, does everything.
+
+```{r read in glmmTMB}
+library(glmmTMB)
+```
+
+# Fit glmmTMB model
+
+Data generation process - Poisson. Determines how many recruits.
+
+On top of that - whether you can detect them. There were 1, 2, 3 but didn't detect them **false zeros**.
+
+Model will separate out into 2 processes:
+
+1. Determine rate of false zeros - likely to be true/false. Binomial-Bernoulli process of counting zeros. Can only been in one of two states
+2. Count process is Poisson.
+
+A mixture of two models (not a mixed model).
+
+```{r fit zi model}
+quinn.zip <- glmmTMB(RECRUITS ~ DENSITY * SEASON,
+                     zi = ~1, # fiting zero inflated model
+                     data = quinn,
+                     family = poisson())
+```
+
+Lots of validation functions don't work well with zi modesl - DHARMa does.
+
+Before with Poisson was overdispersed. Here is not. Zero inflated model can be overdispered, can run a zero inflated negative binomial model.
+
+```{r ZI DHARMa}
+quinn.resid <- quinn.zip %>% simulateResiduals(plot = TRUE)
+```
+
+Output in 2 parts:
+
+1. Conditional model - same as above
+2. Zero inflated part - modelled as ~ 1 (intercept only)
+    - Intercept = -3 - log-odds ratio
+        - odds-ratio: probability of zeros being true to false
+        - plogis: proportion of zeros that are false
+  
+```{r ZIP summary}
+quinn.zip %>% summary()
+
+exp(-3.007)
+plogis(-3.007) # 5% of zeros are false zeros
+```
+
+Saw zeros were all in one group.
+
+Conditional model is main result - the ecology.
+
+Zero-inflation model - speaks to methodology.
+
+- Detectability is significantly higher in Summer than Winter, when density is high...
+
+Only difference - CIs would be different. 
+
+```{r adding zip interaction}
+quinn.zip <- glmmTMB(RECRUITS ~ DENSITY * SEASON,
+                      zi = ~ DENSITY * SEASON,
+                      data = quinn, 
+                      family = poisson())
+quinn.zip %>% summary
+```
 
 
 # References
