@@ -49,6 +49,8 @@ knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FAL
 
 Load the necessary libraries
 
+nlme, lme4, lmerTest superceded by glmmTMB
+
 ```{r libraries, results='markdown', eval=TRUE, message=FALSE, warning=FALSE}
 library(car)       #for regression diagnostics
 library(broom)     #for tidy output
@@ -61,7 +63,7 @@ library(emmeans)   #for estimating marginal means
 library(ggeffects)  #for partial effects plots
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
-library(nlme)
+# library(nlme)   # 
 library(lme4)      #for lmer
 library(lmerTest)  #for satterthwaite p-values with lmer
 library(performance) #for residuals diagnostics
@@ -84,11 +86,17 @@ with strong virus.  So the leaves were blocks and each treatment was represented
 once in each block.  A completely randomised design would have had 16 leaves,
 with 8 whole leaves randomly allocated to each treatment.
 
+Trends in lesions in relation to different strength of inoculations.
+
+Used leaf as own control (block). Applied both treatments to the same leaf.
+
 ![Tobacco plant](../resources/TobaccoPlant.jpg){height="300"}
 
 ![Sampling design](../resources/ws9.3aQ1.1.png)
 
 Format of tobacco.csv data files
+
+Again, do not have raw count data. Assume gaussian distribution to start with.
 
 LEAF   TREAT    NUMBER
 ------ -------- --------
@@ -109,9 +117,15 @@ LEAF   TREAT    NUMBER
 
 # Read in the data
 
+Categorical data and random effects must be factors.
+
 ```{r readData, results='markdown', eval=TRUE}
 tobacco <- read_csv('../data/tobacco.csv', trim_ws = TRUE)
 glimpse(tobacco)
+
+tobacco <- tobacco %>% 
+  mutate(LEAF = factor(LEAF),
+         TREATMENT = factor(TREATMENT))
 ```
 
 
@@ -130,21 +144,259 @@ representing the overall intercept and effects of the treatment on the number of
 lesions.  $\bf{Z}$ represents a cell means model matrix for the random
 intercepts associated with leaves.
 
+$\gamma$ must sum to 0.
+
+Variance equals normality. Quadrants should be roughly equal. Okay here.
+
+Homogeneity of variance is okay. Smaller datasets more likely to have outliers.
+
+```{r boxplot}
+ggplot(tobacco, aes(x = TREATMENT, y = NUMBER)) +
+  geom_boxplot()
+```
+
+At least will fit intercept model because clearly do not have the same intercept - line goes up and down versus straight across same number of lesions per leaf. 
+
+Should we also have a different effect per leaf? Lines are not parallel, there is an interaction per say, so should also do random slopes. May want to include a random slope. Would potentially explain more of the variability.
+
+```{r line graph}
+ggplot(tobacco, aes(x = as.numeric(LEAF), y = NUMBER)) + # as.numeric to plot as a line
+  geom_line(aes(linetype = TREATMENT))
+
+ggplot(tobacco, aes(y = NUMBER, x = TREATMENT, group = LEAF)) +
+  geom_point() +
+  geom_line(aes(x = as.numeric(TREATMENT)))
+```
+
 
 # Fit the model {.tabset .tabset-faded}
 
+Just using glmmTMB as it will do more for other packages. 
+
+nlme does quasi likelihood (not genuine) so cannot do AIC. It is a hack, not a complete solution.
+
+Using maximum likelihood to estimate. In the presence of random effects is biased. REML - residual maximum likelihood
+
+ML - maximizes the likelihood of the data given the parameters
+
+REML - maximizes the residuals given the paraemters. Like standardizing observations for those random effects. Less biased toward mixed effect intercepts - try and bring them in.
+
+## Random intercepts
+
+```{r glmm}
+tobacco.glmmTMB <- glmmTMB(NUMBER ~ TREATMENT + (1 | LEAF), # separate intercept per block
+                           data = tobacco, REML = TRUE)
+```
+
+NUMBER ~ TREATMENT + (1 | LEAF) assumes 1 + TREATMENT
+
+So for slope and intercept model add replace the 1 with TREATMENT.
+
+Warning: non-positive-definite Hessian matrix
+  
+    - calculate gradients need to invert matrix, expensive
+    - Hessian matrix approximates inversion
+    - if certain characteristics not met, is no longer a good approximation
+    - warning an assumption has not been met, can't guarantee it is reliable
+    - model convergence - estimates might not be stable
+    - often estimates are okay but SD rubbish therefore CI, p values etc. also rubbish
+    
+What to do? 
+    1. Variance can't pick up
+    2. Change the engine/algorithm/optimizers
+    3. Switch to baysian
+    
+## Random slope and intercept
+
+```{r slope-intercept glmm, warning=TRUE}
+tobacco.glmmTMB1 <- glmmTMB(NUMBER ~ TREATMENT + (TREATMENT | LEAF), # separate intercept per block
+                           data = tobacco, REML = TRUE)
+```
+
+Optimizers include:
+
+- `nlminb` (non linear optimzer) very efficient good for large amounts of data
+- `Nelder-Mead` - wobbly triangle, robust but relatively slow
+- `bfgs` - quasi-Newton method, gradient based, fast, but less robust as requires function to be differentiable
+- `L-BFGS-B` - as above with different constraints
+- `SANN` - simulated annealing - relatively slow
+
+`?glmmTMBControl` help documentation about optimizers. A
+
+> If switching from default algorithm would put in paper.
+
+Switching to BFGS and dataset is small so no computational issues.
+
+```{r chang optimizer slope-intercept glmm, warning=TRUE}
+tobacco.glmmTMB1 <- glmmTMB(NUMBER ~ TREATMENT + (TREATMENT | LEAF), 
+                           data = tobacco, REML = TRUE,
+                           control = glmmTMBControl(optimizer = 'optim', # package they occur in 
+                                                    optArgs = 'BFGS')) # optimization function
+```
+
+> Turn REML off when comparing fixed effects - only one here.
+
+```{r}
+tobacco.glmmTMB1 %>% summary()
+```
+
+TREATMENTWeak - variance of slopes. Low so probably why intercepts only was better model.
+
+Also gives Corr 0.34. Measure to degree intercepts and slopes are correlated. Not high here, sometimes is. Regression lines can pivot throuh a point so there is a correlation between intercept and slope.
+
+Don't need to do anything, but can fit a model with random intercepts and slope and assumes no correlation.
+
+> Ususally a deal breaker because generally there is a correlation. MH advises against using it unless there is a good reason.
+
+```{r no correlation}
+tobacco.glmmTMB <- glmmTMB(NUMBER ~ TREATMENT + (TREATMENT || LEAF), # double || for no correlation
+                           data = tobacco,
+                           REML = TRUE)
+```
+
+
+## Compare intercept v slope-intercept modesl
+
+AICc for smaller datasets.
+
+Intercept only is better.
+
+```{r AICc}
+AICc(tobacco.glmmTMB, tobacco.glmmTMB1)
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## Plot model
+
+All looks good.
+
+```{r }
+plot_model(tobacco.glmmTMB, type = 'diag')[-2] %>% # bug, second plot doesn't work so need to remove
+  plot_grid()
+```
+
+# DHARMa residuals
+
+Warnings here beneigh. Warnings about not enough data.
+
+Q-Q okay.
+Right plot - want even spread for both groups. Okay here.
+
+```{r DHARMa}
+tobacco.resid <- tobacco.glmmTMB %>% 
+  simulateResiduals(plot = TRUE)
+```
 
 # Partial plots {.tabset .tabset-faded}
 
+Strong is higher than week, expect negative effect. Might be significant.
+
+```{r marginal partial plot}
+tobacco.glmmTMB %>% ggemmeans(~ TREATMENT) %>% plot()
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+Conditional to separate zero inflated models - not relevant here.
+
+Random intercept models - rarely interested in difference between levels, leaves here. Interested in variance. Matter of scale of variability - lesions vary as much between the leaves as in the leaves. 
+
+Here variance within the LEAF (intercepts) and between LEAF is similar. So it is good. 
+
+Blocking is to reduce variability for fixed effects. Even if it's not 'doing it's job' need to include blocking because of dependency in the design.
+
+Fixed effects - same interpretation as before:
+Intercept is 34.90 - average number of lesions on Strong TREATMENT
+Evidence of TREATMENT effect. On average lesions declines -7.8 units.
+
+```{r summary}
+tobacco.glmmTMB %>% summary()
+```
+
+In units of covariance not correlation.
+
+Negative correlation - things that were closer together were actually less correlated.
+
+Dependency we were trying to control with the blocking was not as big as could have been. Interesting to know degree of correlation - don't need to report it.
+
+Cut off point ~0.8. Don't need to do anything, just very high correlation.
+
+```{r variance covar}
+tobacco.glmmTMB %>% vcov()
+
+# convert to correlation
+cov2cor(vcov(tobacco.glmmTMB)$cond)
+```
+
+How much each intercept differes from global intercept? 
+
+Gamma values which sum to 0.
+
+Leaf 7 is more susceptible to lesions than other leaves particularly leaf 4 and 8.
+
+```{r randome effects intercepts}
+tobacco.glmmTMB %>% ranef()
+```
+
+## Tidy
+
+Need to split fixed and random. Can do together but NAs for non-relevant parts.
+
+### Fixed 
+
+```{r fixed effects table}
+tobacco.glmmTMB %>% tidy(effects = 'fixed', conf.int = TRUE)
+```
+
+```{r random effects table}
+tobacco.glmmTMB %>% tidy(effects = 'ran_pars', conf.int = TRUE)
+```
+
+## $R^2$
+
+If we average over, ignoring random effects - 0.371. Variability explained by fixed effects.
+
+Include randome effects goes up to 0.676. More about strength of model. 
+
+If marginal is really small means that treatment size is less important (if conditional is greater) and there are other things that are more important.
+
+```{r R2}
+tobacco.glmmTMB %>% r.squaredGLMM()
+tobacco.glmmTMB %>% performance::r2_nakagawa()
+```
+
+# Further analysis
+
+Might want to test a specific hypothesis - **general hypothesis tests**.
+
+What did we hypothesis test above?
+
+Difference between Strong/Weak treatments. P-value of TREATMENTWeak is testing whether estimate is different from 0. 
+
+Might want to test something specific - is slope greater than 3? etc.
+
+multcomp package has general linear hypothesis test
+
+Testing whether effect of Weak treatment is greater than 2.
+
+Easier in Bayesian.
+
+```{r multcomp}
+tobacco.glmmTMB %>% multcomp::glht(linfct = c('TREATMENTWeak = -2')) %>% 
+  summary()
+```
 
 # Predictions {.tabset .tabset-faded}
 
+```{r plot}
+tobacco.glmmTMB %>% emmeans(~ TREATMENT) %>% 
+  as.data.frame() %>% 
+  ggplot() +
+    geom_pointrange(aes(x = TREATMENT, y = emmean, 
+                        ymin = lower.CL, ymax = upper.CL)) +
+  theme_classic()
+```
 
 # Summary figures {.tabset .tabset-faded}
 
