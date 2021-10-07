@@ -72,19 +72,9 @@ library(scales)    #for more scales
 # Scenario
 
 An ecologist studying a rocky shore at Phillip Island, in southeastern
-Australia, was interested in how clumps of intertidal mussels are maintained
-[@Quinn-1988-137]. In particular, he wanted to know how densities of adult
-mussels affected recruitment of young individuals from the plankton. As with
-most marine invertebrates, recruitment is highly patchy in time, so he expected
-to find seasonal variation, and the interaction between season and density -
-whether effects of adult mussel density vary across seasons - was the aspect of
-most interest.
+Australia, was interested in how clumps of intertidal mussels are maintained [@Quinn-1988-137]. In particular, he wanted to know how densities of adult mussels affected recruitment of young individuals from the plankton. As with most marine invertebrates, recruitment is highly patchy in time, so he expected to find seasonal variation, and the interaction between season and density - whether effects of adult mussel density vary across seasons - was the aspect of most interest.
 
-The data were collected from four seasons, and with two densities of adult
-mussels. The experiment consisted of clumps of adult mussels attached to the
-rocks. These clumps were then brought back to the laboratory, and the number of
-baby mussels recorded. There were 3-6 replicate clumps for each density and
-season combination.
+The data were collected from four seasons, and with two densities of adult mussels. The experiment consisted of clumps of adult mussels attached to the rocks. These clumps were then brought back to the laboratory, and the number of baby mussels recorded. There were 3-6 replicate clumps for each density and season combination.
 
 Format of quinn.csv data files
 
@@ -119,11 +109,40 @@ glimpse(quinn)
 summary(quinn)
 ```
 
-Since we intend to model both SEASON and DENSITY as categorical variables, 
-we need to explicitly declare them as factors.
+Since we intend to model both SEASON and DENSITY as categorical variables, we need to explicitly declare them as factors.
 
+Plot to see factor order of seasons: 
+
+```{r boxplot}
+ggplot(quinn, aes(y = RECRUITS, x = SEASON, fill = DENSITY)) +
+  geom_boxplot()
+```
+
+```{r change order of seasons}
+quinn <- quinn %>% 
+  mutate(SEASON = factor(SEASON, levels = c('Spring', 'Summer', 'Autumn', 'Winter')),
+         DENSITY = factor(DENSITY))
+```
 
 # Exploratory data analysis
+
+Trend with mean and variance?
+
+Size of boxplot ~ variance
+Some higher means (bar is median) have higher variance. Is expected with Poisson distribution. Some exceptions - Autumn-Low. Could be overdispersed.
+
+If log response the higher mean, higher variance relationship should result in equal sized boxes as response increases.
+
+Winter-Low looks like it is 0-inflated.
+
+```{r redo boxplot}
+ggplot(quinn, aes(y = RECRUITS, x = SEASON, fill = DENSITY)) +
+  geom_boxplot()
+
+ggplot(quinn, aes(y = RECRUITS, x = SEASON, fill = DENSITY)) +
+  geom_boxplot() +
+  scale_y_log10()
+```
 
 Model formula:
 $$
@@ -155,16 +174,130 @@ Lets mimic the effect of using a log link, by using log scaled y-axis.
 
 - that is an improvement
 
+> When design is not balanced, default ANOVA tables could be wrong. Don't look at an ANOVA table. Rare to have truly balanced design and can be misleading. ANOVA table does not tell us as much as the summary.
 
 # Fit the model {.tabset .tabset-faded}
 
+```{r poisson glm}
+quinn.glm <- glm(RECRUITS ~ DENSITY * SEASON, data = quinn,
+                 family = poisson(link = 'log'))
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## autoplot
+
+First 2 okay. Don't need to worry about scale-location much.
+
+Cook's Distance has influential point.
+
+```{r autoplot}
+quinn.glm %>% autoplot(which = 1:4)
+```
+
+## performance
+
+Homogeneity ideally centered - first group line closest to y-axis is all above the line.
+Multicollinearity not relevant to categorical factors.
+
+```{r check_model}
+quinn.glm %>% performance::check_model()
+```
+
+Doubt cast that the model is good.
+
+Want an overdispersion value of 1 $\mu = \sigma^2$
+
+Dispersion ratio is 3.309 and greater than 3.
+
+Causes of overdispersion:
+
+1. Zero inflated
+    - Poisson not expecting that many 0s. too many 0s will not estimate correctly.
+    - Two things: the data generation process and ability to detect.
+2. Model too simple
+    - Modeling recruitment in seasons and density. Other factors not captured (orientation of rock, relationship to tide line) could be important and could incorporate into the model (if you have the data).
+    - Add a dummy variable as a proxy for all the things you have not collected. An **observation level random effect**. Add a column of 1s. Soaks up the extra variance.
+    - Warning: It can have a statisticak *shrinkage* effect. Shrinks estimates toward the center. If have 2 groups (high/low density) can shrink so 2 groups are less different. Especially if have small dataset.
+3. 
+
+```{r check overdispersion}
+quinn.glm %>% performance::check_overdispersion()
+```
+
+Here is saying have 2 0s and expect 0. Saying zero inflated but is okay. Guide of 20% of data is good. Here, 2 out of ~40 is ok. Both 0s are in the same group which is not ideal.
+
+```{r check zero inflation}
+quinn.glm %>% performance::check_zeroinflation()
+
+```
+
+## DHARMa residuals
+
+will only flag there is a problem versus give values above as it is comparine actual versus simulated residuals.
+
+Failing on overdispersion and outliers. Outliers on bottom level so most likely 0s.
+
+```{r dharma}
+quinn.resid <- quinn.glm %>% simulateResiduals(plot = TRUE)
+```
+
+```{r dharma dispersion test}
+quinn.resid %>% testDispersion()
+```
+
+Have 2, simulate  mostly expect 0 zeros.
+
+```{r 0 inflation}
+quinn.resid %>% testZeroInflation()
+```
+
+Aggregating or clumping of data. Normally expect things to be homogeneous in their distribution. If so, negative binomial would be better - sometimes 0 sometimes not is expected in this distribution. Poisson expects more uniform distribution.
+
+Binomial good for clumpiness, but not for drastic (>20%) zer inflation. Looks very Poisson-y.
 
 # Different model {.tabset .tabset-faded}
 
+For simple model like this, cannot adjust GLM. 
+
+`MASS::glm.nb` only runs negative binomial.
+
+```{r}
+quinn.nb <- MASS::glm.nb(RECRUITS ~ DENSITY * SEASON, data = quinn)
+```
+
+## Diagnostics
+
+Outlier still not fantastic.
+
+```{r nb autoplot}
+quinn.nb %>% autoplot(which = 1:6)
+```
+
+```{r nb checkmodel}
+quinn.nb %>% performance::check_model()
+```
+
+Overdisperson with DHARMa looks better. Not all tests create equal.
+
+**Why is overdisperson a problem? **
+
+It underestimates the standard errors in slopes, etc. Gives you Type I errors, makes your estimates seem more precise than they should be.
+
+Early way of addressing overdispersion was to adjust df to compensate with 'quasi' models. Overdisperson increases power, decrease df to compensate and hopefully end up back where should be. Problem - adjusting df is approximate. No way of knowing how well it is doing. Band-aid solution. Can't use AIC with quasi models. *No need to use quasi models anymore*. New tools like negative binomial.
+
+```{r nb dharma}
+quinn.resid <- quinn.nb %>% 
+  simulateResiduals(plot = TRUE)
+```
+
 # Partial plots {.tabset .tabset-faded}
+
+Effect of DENSITY in the summer but not in the other seasons.
+
+```{r nb plot_model}
+quinn.nb %>% plot_model(type = 'eff', terms = c('SEASON', 'DENSITY')) # put both variables on the one graph to see interaction
+```
 
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
