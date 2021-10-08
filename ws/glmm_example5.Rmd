@@ -117,6 +117,9 @@ owls <- owls %>%
          NCalls = SiblingNegotiation)
 ```
 
+![expdesign](../resources/glmm_example5_expdesign.png){width="200" height="160"}
+
+
 # Data preparation
 
 # Exploratory data analysis
