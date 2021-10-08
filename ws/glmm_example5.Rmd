@@ -94,17 +94,38 @@ Each nest was measured on multiple occasions.  Hence, we must include the nest
 as a random effect to account for the lack of independence between observations
 on the same set of siblings.
 
+RESPONSE - Measuring numbers of calls - **Sibling negotiations**
+Semi-captive, sometimes supplemented food of nest which could affect the amount the siblings call.
+Sex of returning parent
+Arrival time of returning parent
+Broodsize - more chicks in nest more calls
+Number of calls per chick
+
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
 owls = read_csv('../data/owls.csv', trim_ws=TRUE)
 glimpse(owls)
 ```
+Don't need to relevel.
+
+```{r factorize}
+owls <- owls %>% 
+  mutate(Nest = factor(Nest),
+         FoodTreatment = factor(FoodTreatment),
+         SexParent = factor(SexParent),
+         NCalls = SiblingNegotiation)
+```
 
 # Data preparation
 
 # Exploratory data analysis
 
+Count - poisson (log link)
+
+Number of negotiations per chick is a funny ratio, difficult to model
+
+Model counts but report negotiations per chick not calls per nest
 
 Model formula:
 $$
@@ -119,25 +140,329 @@ arrival time (and various interactions) on the number of sibling negotiations.
 Brood size was also incorporated as an offset.  $\bf{Z}$ represents a cell means
 model matrix for the random intercepts associated with individual nests.
 
+Explore relationship between mean and variance. Random slopes.
+
+- Data are skewed - expected from Poisson.
+- Some zeros in data. Jitter dodge helps see this
+    - Need to consider in Poisson models.
+- Poisson is log link so could log the y axis, but we have 0s
+    - Pseudo log transform, stretch the axis but include 0s mimicking real log
+    
+    
+    
+```{r}
+ggplot(owls, aes(y = NCalls, x = FoodTreatment, color = SexParent)) +
+  geom_violin()+
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.9)) +
+  scale_y_continuous(trans = scales::pseudo_log_trans())
+```
+
+Worth exploring random slope for FoodTreatment. Not as much of a trend for male/female.
+
+```{r facet viz}
+ggplot(data = owls) +
+  geom_point(aes(y = NCalls, x = FoodTreatment, color = SexParent), position = position_dodge(0.5)) +
+  facet_wrap(~ Nest)
+```
+
 
 # Fit the model {.tabset .tabset-faded}
 
+Explore if we need random slopes or not from above.
+
+Modelling number of calls but want number of calls per chick. So need to take into account brood size. 
+
+1. Could include brood size as a variable in our model like done w other things. Will get a slope associated with it and use a df.
+2. Rather than model, can assume slope is 1 to 1 relationship. Can define as an offset. Can be used to standarize the response but will not use a df. Enable us to report calls/chick. **win**
+
+Will include the offset in every model.
+
+> Would do the same for something like density. Number of fish and area counted in - fish per area. Model fish count as Poisson and add area as offset and get density. Much harder to model density than count.
+
+`offset` includes in model but does not estimate any parameters, do not get a slope, assumes 1 to 1. In order for 1:1 to stay relvant need to log `offset` BroodSize. Gaussian distribution uses identity so do not need to transform offset.
+
+```{r random intercept}
+owls.glmmTMB1 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (1 | Nest), 
+                         data = owls,
+                         family = poisson(link='log'),
+                         REML = TRUE)
+```
+
+```{r random intercept slope food}
+owls.glmmTMB2 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (FoodTreatment | Nest), # est food treatment separately for each nest vs the average of nest 
+                         data = owls,
+                         family = poisson(link='log'),
+                         REML = TRUE)
+```
+
+```{r random intercept slope sex parent}
+owls.glmmTMB3 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + (SexParent | Nest), # est sex parent separately for each nest vs the average of nest 
+                         data = owls,
+                         family = poisson(link='log'),
+                         REML = TRUE)
+```
+
+```{r random intercept slope interaction }
+owls.glmmTMB4 <- glmmTMB(NCalls ~ 1 + offset(log(BroodSize)) + 
+                           (FoodTreatment * SexParent | Nest), # est combination of sex parent*foodtreatment separately for each nest vs the average of nest 
+                         data = owls,
+                         family = poisson(link='log'),
+                         REML = TRUE)
+```
+
+Compare random effect models:
+
+Interaction random effect AIC is lowest - model 4
+
+```{r AIC}
+AICc(owls.glmmTMB1, owls.glmmTMB2, owls.glmmTMB3, owls.glmmTMB4)
+```
+
+Add in fixed effects with model 4
+
+```{r update with interaction}
+owls.glmmTMB4a <- update(owls.glmmTMB4, .~. + FoodTreatment * SexParent)
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## check model
+
+Ignore multicollinearity because factors
+Non-normality - tails some cause for concern
+Residual plots there is some curve, curve of values is the 0s leading to the smoother curving
+Bottom corner bunch of random effect on q-q type plots - look okay. Don't want to see tails.
+
+```{r check model}
+owls.glmmTMB4a %>% performance::check_model()
+```
+
+## Performance
+
+### Overdisperion check
+
+Performance package has extra diagnostics for overdispersion. Want <3.
+
+We have 4 - evidence of overdispersion. Model is more varied than we would expect.
+
+Causes:
+
+1. Zero-inflated
+2. Too simple a model - add something
+3. Add a dummy variable - shrinkage of estimates.
+4. Could do negative binomial, good at handling
+
+```{r overdispersion}
+owls.glmmTMB4a %>% performance::check_overdispersion()
+```
+
+### Check zero inflation
+
+Have 156 0s, expects 44. Decided there is too many 0s.
+
+with this degree of 0s, consider fitting a zero
+
+```{r}
+performance::check_zeroinflation(owls.glmmTMB4a)
+```
+
+## DHARMa
+
+## Check over dispersion
+
+```{r}
+owls.resid <- owls.glmmTMB4a %>% simulateResiduals(plot = TRUE, intergerResponse = TRUE)
+```
+
+### Dharma zero inflation
+
+Clearly zero inflated
+
+```{r dharma zero}
+owls.resid %>% testZeroInflation()
+```
+
+### Autocorrelation test 
+
+Observations collected closer in space and time might be more similar that observations 'farther' away.
+
+Could explore patters in residuals that relate to time with the arrive time variable.
+
+Collected the residuals in owls.reisd or residuals(model) and should relate them to other variables like time and space. 
+
+See if residuals that are close in time are further than farther in time.
+
+
+
+```{r autocorrelation}
+owls.resid %>% testTemporalAutocorrelation(time = owls$ArrivalTime)
+```
+
+Error - saying there are duplicates. Common with blocking data. 
+
+Not concerned about comparing times between nests - block takes care of that. Want within nests comparisons.
+
+Want to see autocorrelation plot drop off immediately - no autocorrelation.
+If bars stick out of dashed lines implies there is a problem.
+If is problematic can fit autocorrelation structure. ARMA, coARMA...
+
+sigma2 on diagonal of matrix assuming correlation on upper/lower diagonal are the same.
+Can specifiy the progressive autocorrelation structure 
+
+AR1 - first autoregressive structure
+0.8^1 = 0.8
+0.8^2 = 0.64
+0.8^3 = ...  eventually gets smaller
+
+Adjusting variance covariance matrix for time.
+
+Here is not autocorrelated so do not have to fit.
+
+If you do fit:
+glmmTMB(NCalls | ar1(Time var) ~ . , ...)
+
+```{r doesnot work...}
+owls.resid <- owls.resid %>% 
+  recalculateResiduals(group = interaction(owls$ArrivalTime, owls$Nest),
+  aggregateBy = mean)
+
+owls.resid %>% testTemporalAutocorrelation(time = unique(owls$ArrivalTime))
+
+length(unique(owls$ArrivalTime))
+```
 
 
 # {-}
 
 # Model refit and validation {.tabset .tabset-faded}
 
+# Zero inflated model
+
+Accept the below.
+
+Some of the 0 calls (no chicks called) they did but you just didn't hear them. Recorded with microphones - so maybe the microphones didn't pick it up. Likely to be the case because of methodology.
+
+If 0s are true 0s do something else - Hurdle
+
+Fitting so to explain first as it is a simpler model.
+
+```{r zi}
+owls.glmmTMB5 <- glmmTMB(NCalls ~ FoodTreatment * SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment * SexParent|Nest),
+                         ziformula = ~1, data = owls, 
+                         family = poisson(link = 'log'),
+                         REML = TRUE)
+```
+
+Estimate rate of false different per FoodTreatment * SexParent combination. Allowing for more nuance.
+
+Maybe when satiated are less desperate and all less.
+
+```{r zi interaction}
+owls.glmmTMB6 <- glmmTMB(NCalls ~ FoodTreatment * SexParent + offset(log(BroodSize)) +
+                           (FoodTreatment * SexParent|Nest),
+                         ziformula = ~FoodTreatment * SexParent, data = owls, 
+                         family = poisson(link = 'log'),
+                         REML = TRUE)
+```
+
+## Validation
+
+Much improved.
+
+KS test is very sensitive so okay.
+
+```{r}
+owls.resid <- owls.glmmTMB6 %>% simulateResiduals(plot = TRUE, integerResponse = TRUE)
+```
 
 
 # Partial plots {.tabset .tabset-faded}
 
+Using offset need to be careful.
+
+```{r partial}
+owls.glmmTMB6 %>% ggemmeans(~FoodTreatment + SexParent) %>% plot()
+```
+
+Must remember that we have an offset. 
+log(0) = 1, saying what's the prediction per 1 chick.
+Will give us the prediction per chick.
+Rougly 1 for Satiated group, 2 for Deprived group.
+
+```{r zero offset}
+owls.glmmTMB6 %>% ggemmeans(~FoodTreatment + SexParent, offset = 0) %>%
+  plot()
+```
+
+If wanted per nest could set offset to average nest size.
+
+Same scale as first plot.
+
+```{r per nest}
+off <- owls %>% summarize(Mean = mean(BroodSize))
+off
+
+owls.glmmTMB6 %>% ggemmeans(~FoodTreatment + SexParent, offset = log(4.39)) %>%
+  plot()
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+Model 6
+
+```{r plot mod 6}
+owls.glmmTMB6 %>% ggemmeans(~FoodTreatment + SexParent, offset = log(1)) %>% plot()
+
+```
+
+Random effects:
+Intercept - deprived female groups, Variance of deprived female group per nest
+  - varied the most, saw from data viz graph
+FoodTreatmentSatiated - variability of satiated females per nest
+SexParentMale - var deprived males per nest
+
+Variability compare to other est - units of variance, log does not really matter
+
+Fixed effects:
+No evidence of an interaction.
+Evidence of food treatment effect - deprived group more calls than satiated (-0.8 fewer)
+No evidence effect of Sex parent.
+
+On log scale.
+
+Zero inflated model:
+Intercept - rate of false 0s in female deprived group
+
+    - Majority of 0s are true 0s, but 20% are false
+    
+FoodTreatmentSatiated - positive so rate of false 0s is higher than deprived females. still calling, but less vigorously or loudly so don't hear as well
+SexParentMale - negative so rate of false 0s is lower
+
+
+Meet assumptions - so highly likely these are all true 0s
+
+```{r zi summary}
+owls.glmmTMB6 %>% summary()
+
+#Fixed
+exp(0.86) # 2.37 calls for deprived females
+exp(-0.824) # difference between female deprived and satiated, satiated is .43 of deprived in female group
+1/exp(-0.824) # deprived female is 2.27 fold more than satiated female
+
+# Zero
+exp(-1.3762)
+1/exp(-1.3762) #~4x more zeros that are true than false
+plogis(-1.3762) # 20% of zeros are actually false, so are calls in female deprived group, more common interpretation
+```
+
+Don't need to go further because 2 factors, no interaction.
+
+> Hurdle model: still addressing overdisperson but saying 2 different processes operationg. 1 that governs whether fish are there in the first place and 2 the count process. Got 0, but some trigger (hurdle not met) hasn't occured so that's why they're not there. Split data in the pres/abs so what variables determine when likely to be pres/abs. Then non-zeros do a count. Does it in the same model. Define 'hu = ~1'.
+
+> Hurdle gamma distribution because 0s illegal in Poisson.
+
+> Tweedie hovers between Poisson and gamma. Some properties of each - has 0 (Poisson) but not integers (gamma)
 
 # Predictions
 
