@@ -74,6 +74,12 @@ library(see)         #for diagnostic plots
 
 ![Crab_shrimp_coral](../resources/crab_shrimp_coral.jpg){width="400" height="284"}
 
+Benefits of macrosymbionts on predicting coral from predation.
+
+Tank is own control, repeated measurements with different treatment at each time point.
+
+Tanks are blocks. Symbiont treatment within the block. Each block experiences each treatment in a random order. Control is in the presence of no symbionts, how much predation.
+
 To investigate synergistic coral defence by mutualist crustaceans,
 @Mckeon-2012-1095 conducted an aquaria experiment in which colonies of a coral
 species were placed in a tank along with a predatory sea star and one of four
@@ -101,6 +107,16 @@ mckeon = read_csv('../data/mckeon.csv', trim_ws=TRUE)
 glimpse(mckeon)
 ```
 
+Factorize
+
+Relevel SYMBIONT to control.
+
+```{r factor}
+mckeon <- mckeon %>% 
+  mutate(BLOCK = factor(BLOCK),
+         SYMBIONT = factor(SYMBIONT, levels = c('none', 'crabs', 'shrimp', 'both')))
+```
+
 
 # Exploratory data analysis {.tabset .tabset-faded}
 
@@ -110,29 +126,206 @@ y_i \sim{} \mathcal{N}(n, p_i)\\
 ln\left(\frac{p_i}{1-p_1}\right) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
 $$
 
-where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
-and $\bf{X}$ is the model matrix representing the overall intercept and effects of symbionts on the probability of the colony experiencing predation.
-$\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual coral colonies.
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively and $\bf{X}$ is the model matrix representing the overall intercept and effects of symbionts on the probability of the colony experiencing predation. $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual coral colonies.
 
+Normal test not appropriate - binomial
+
+Need to test for **identifiability**. Needs to be some variability 
+
+Plot by tank to evaluate whether need random slopes model.
+
+No SYMBIONT - more predation.
+
+6/10 tanks have no predation with both SYMBIONTS.
+
+Patterns are not completely the same for every coral - worth considering random slopes. Don't expect exact patterns, but here preforming very differently. Block 4 v 8.
+
+```{r viz}
+ggplot(mckeon, aes(y = PREDATION, x = SYMBIONT)) +
+  geom_point(position = position_jitter(width = 0.2, height = 0)) + # to avoid overlap
+  facet_wrap(~ BLOCK)
+```
 
 
 # Fit the model {.tabset .tabset-faced}
 
+```{r intercept model, warning=TRUE}
+mckeon.glmmTMB1 <- glmmTMB(PREDATION ~ SYMBIONT + (1|BLOCK),
+                           data = mckeon,
+                           family = binomial(link = 'logit'),
+                           REML = TRUE)
+```
 
+Not converging - change optimizer.
+
+```{r slope model, warning=TRUE}
+mckeon.glmmTMB2 <- glmmTMB(PREDATION ~ SYMBIONT + (SYMBIONT|BLOCK), # effect of symbiont differs to block, variability of treatments on each coral
+                           data = mckeon,
+                           family = binomial(link = 'logit'),
+                           REML = TRUE)
+```
+
+Intercept is average intercept of all random effects.
+
+Allow random slope - is the average of all the slopes. 
+
+Averages will be the same, but CI will be smaller.
+
+Also not converging. Have hit the limit with the data - random slopes model is too complicated for our dataset. Ok, more conservative model which is always okay.
+
+```{r slope model, warning=TRUE}
+mckeon.glmmTMB2 <- glmmTMB(PREDATION ~ SYMBIONT + (SYMBIONT|BLOCK), # effect of symbiont differs to block, variability of treatments on each coral
+                           data = mckeon,
+                           family = binomial(link = 'logit'),
+                           control = glmmTMBControl(optimizer = optim,
+                                                    optArgs = list(method = 'BFGS')),
+                           REML = TRUE)
+```
 # Model validation {.tabset .tabset-faded}
+
+Plots look reasonable.
+Boxplots vaguely symmetrical around the middle.
+
+```{r DHARMa}
+mckeon.resid <- mckeon.glmmTMB1 %>% simulateResiduals(plot = TRUE)
+```
 
 
 # Partial plots {.tabset .tabset-faded}
 
+Probability of being predated with no symbionts is high.
+Probability of predation with both symbionts is lower but much higher CI.
+
+```{r partial}
+mckeon.glmmTMB1 %>% 
+  ggemmeans(~ SYMBIONT) %>% 
+  plot(add.data = TRUE, jitter = c(0.05,0)) # so can get an idea of density only on x
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+logit - log odds ratio
+
+exp(estimate) can talk about ratios
+
+50% chance of predation is 1:1 ratio (prob/(1-prob))
+Percent maps easier to plots.
+
+All other symbionts relative to none - ratio of odds ratios
+crab (prob/(1-prob)) / (prob/(1-prob)) none
+
+All SYMBIONTS significantly different from none
+
+Mixed model - models what it would be like to have infinite sample size. Assuming variability of the 10 samples is the variability of the whole. Also done in the lab so controlled. Using coral as control will better capture between individual variance - more important...
+
+```{r summary}
+mckeon.glmmTMB1 %>% summary()
+
+exp(4.42) # to get odds ratio, 83x more likely to be predated on in this group
+plogis(4.42) # probability of being predated on in none is 98.8%
+
+exp(-3.317) # crabs odds of being predated is 4%, 96% decline from non
+1/0.036 # none is 27x 
+plogis(4.42 - 3.317) # probability of being predated in crabs is 75% - 21% dec from non
+
+
+exp(-5.152) # 99.5 decrease in odd of being predated
+1/exp(-5.152) # none 172 x higher than both - output in next table
+# a lot but variability is so large aka not really sure
+# can say there is an impact could be as low as 2.8x or up to 10,518x
+plogis(4.42 - 5.152) # probably of being predated in shrimp 32%, 68% dec
+```
 
 # Further analyses {.tabset .tabset-faded}
 
+Tukey's pairwise
 
+Too many comparisons pull out paris of interest 
+
+- p-value adjusted for multiple comparisons
+- no evidence that crab v shrimp matters so just test presence of 1 symbiont
+
+```{r tukeys}
+mckeon.glmmTMB1 %>% emmeans(~ SYMBIONT, type = 'response') %>% 
+  pairs() %>% 
+  summary(infer = TRUE)
+```
+
+Instead of pairwise tests losing power - Can do 3 comparisons with 4 variables.
+
+Maybe compare the 2 individual symbionts and then 1 symbiont to 2.
+
+Can do 3 comparisons with 4 variables.
+
+covariance matrix
+        c v s  c+s v b    n v c+s+b
+none    0       0           1
+crab    1       1/2         -1/3
+shrimp  -1      1/2         -1/3
+both    0       -1          -1/3
+
+All also have to be independent/orthogonal. Crossproduct
+
+Upper/lower diagonals all 0 = independent. If value is not 0, one of those tests need to go.
+
+```{r covar matrix and crossprd test}
+cmat <- cbind(
+  crab_v_shrimp = c(0, 1, -1, 0),
+  onesym_v_both = c(0, 1/2, 1/2, -1),
+  none_v_sym = c(1, -1/3, -1/3, -1/3)
+)
+
+round(crossprod(cmat),2) # computers sometimes have difficulty representing 0, ask to round easier to visualize
+```
+
+No inferential evidence in difference between crab v shrimp or one symbiont v both.
+
+There is evidence any symbiont vs none is significant, 62 x more predeation with none.
+
+```{r planned contrast}
+mckeon.glmmTMB1 %>% 
+  emmeans(~SYMBIONT, type = 'response') %>% 
+  contrast(method = list(SYMBIONT = cmat)) %>% 
+  summary(infer = TRUE)
+```
+
+First R2 has theoretical and delta R2s. Use the theoretical values - the regular pseudo R2. Same as nakagawa values. Can use more sophisitcated delta for log link.
+
+Symbionts responsible for 15% of variability. Symbionts do deter predation.
+Corals/blocks responsible for most of the variability 86.7%. For this particular case, was very useful to block. 
+
+```{r R2}
+mckeon.glmmTMB1 %>% r.squaredGLMM()
+mckeon.glmmTMB1 %>% performance::r2_nakagawa()
+```
 
 # Summary figure {.tabset .tabset-faded}
 
+```{r partial plot}
+newdata <-mckeon.glmmTMB1 %>% emmeans(~ SYMBIONT, type = 'response') %>% # transform
+  as.data.frame()
+newdata
+ggplot(newdata, aes(x = SYMBIONT, y = prob)) +
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL)) +
+  theme_classic()
+```
+
+# Statisitcal Methods
+
+The effect of macrosymbionts on coral predation were investigated using generalized linear mixed model. Specifically, the model included the fixed effect of macrosymbiont type (None, Crab, Shrimp, Both), the random effects of tank and the presence/absence of seastars predation scars were modelled agains a binomial distribution (logit link). Additionally, comparisons amongst combinations of macrosymbionts were explored using specific contrasts. 
+Model validations, including checks of residuals and dispersion were carried out using the DHARMa package (#REF).
+The GLMM was performed using the glmmTMB package (#REF) and all statistics and grpahics were performed in R4.0.4 (#REF).
+
+- can add specification of random effects in supplement
+- as is implies random intercept
+- don't talk about it as 'planned contrasts' widely
+- generally understood what contrasts are
+- include model selection in supplementary 
+- unless reviewers as for justification of final model
+- reviewer could ask if random slope model was explored, then put it in
+- AIC is a perscribed technique so not going to vary by package like a model
+- enough detail so repeatable
+
+> hierarhcial model for Bayesian as mixed doesn't make sense
 
 # References
