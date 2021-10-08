@@ -94,6 +94,15 @@ required (on financial and ethical grounds). By selecting this option, she did
 not have a set of independent measurements for each oxygen concentration, by
 repeated measurements on each animal across the 8 oxygen concentrations.
 
+Some toads prefer buccal over lung.
+
+Binomial is just 0 or 1.
+
+**Beta** - bound by 0-1.
+
+- won't get stupid predictions for est or CI
+- cannot have 0s or 1s
+
 ![Toad](../resources/bufo.jpg){width="251" height="290"}
 
 Format of mullens.csv data file
@@ -114,11 +123,29 @@ lung     a      15        16.6      4.074
 **SFREQBUC**   Square root transformed frequency of buccal breathing - the response variable
 -------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+sqrt transformation because that was the done thing.
+
+What transofmrations to be linear in some way. Do not want to change the *order* of the data just the *spacing* of the data.
+
+-2 0 -0.5 2 - inverse of sprt is to square which makes negatives positive, smaller values smaller, larger values larger
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
 mullens <- read_csv('../data/mullens.csv', trim_ws = TRUE)
 mullens %>% glimpse()
+```
+
+Factorize
+
+```{r factors}
+mullens <- mullens %>% 
+  mutate(BREATH = factor(BREATH),
+         TOAD = factor(TOAD),
+         pBUC = (FREQBUC/100), # must be between 0 and 1
+         pzBUC = ifelse(pBUC == 0, 0.01, pBUC)) # scale 0s, if value is 0 turn to 0.01 or leave as pBUC
+
+range(mullens$pBUC)
+range(mullens$pzBUC)
 ```
 
 
@@ -137,21 +164,186 @@ interaction on the number of number of worms.  Area of the place segment was
 also incorporated as an offset.  $\bf{Z}$ represents a cell means model matrix
 for the random intercepts associated with individual plates.
 
+Buccal breathers most likely not normal. Lung maybe.
+
+Why not fit linear model? O2 looking non linear below across O2
+
+- Linear is first order polynomial, B0 + B1x^1
+- 2nd order, B0 + B1x + B2X^2 - quadratic, some sort of optimum
+- anything beyond 3rd order polynomial hard to justify, not sensible
+
+Lots of levels of oxygen - can test pairwise and group.
+
+```{r boxplot}
+ggplot(mullens, aes(y = FREQBUC, x = factor(O2LEVEL), color = BREATH)) + # factor 02 just for boxplots
+  geom_boxplot()
+```
+
+Want to be able to distinguish which polynomial is significant
+
+Poly creates a component of each x, x2, x3 that are orthogonal independent of each other.
+
+```{r random intercept}
+mullens.glmmTMB2a <- glmmTMB(pzBUC ~ BREATH * poly(O2LEVEL, 3) # up to 3rd order 
+                             + (1|TOAD),
+                             data = mullens,
+                             family = beta_family(link = 'logit'), # beta is separate function
+                             REML = TRUE)
+```
+
+O2LEVEL is always poly even in random effects
+
+AIC negative from negative deviance
+
+```{r random slope-intercept}
+mullens.glmmTMB2b <- glmmTMB(pzBUC ~ BREATH * poly(O2LEVEL, 3) # up to 3rd order 
+                             + (poly(O2LEVEL, 3)|TOAD),
+                             data = mullens,
+                             family = beta_family(link = 'logit'), # beta is separate function
+                             REML = TRUE,
+                             control = glmmTMBControl(optimizer = optim,
+                                                      optArgs = list(method = 'BFGS')))
+```
+
+```{r AIC}
+AICc(mullens.glmmTMB2a, mullens.glmmTMB2b)
+```
 
 # Fit the model {.tabset .tabset-faded}
 
+Same as above
 
 # Model validation {.tabset .tabset-faded}
 
+Beautiful - because doing sensible things.
+
+```{r DHARMa}
+mullens.resid <- mullens.glmmTMB2b %>% simulateResiduals(plot = TRUE)
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+Looks similar to boxplots - good.
+
+```{r O2 Conditional on breath}
+mullens.glmmTMB2b %>% ggemmeans(~ O2LEVEL|BREATH) %>% 
+  plot()
+```
+
+Polynomial is as if have centered. Dont need to center.
+
+Toad intercept - not a big difference between toads in baseline buccal breathing rate for centered O2.
+poly(x)1 var = 11.9, does vary dramatically
+
+Doesn't really make sense to talk about odds ratios with betas - just for binomial
+
+poly - necessary to interpret this way with x1 component, x2 component etc.
+
+- 3rd order poly has components of 1st and 2nd order
+- poly convenient way of re-expressing the O2LEVEL
+
+Fixed:
+Intercept - buccal breathers, center O2
+BREATHlung - difference between buccal and lung breathers, evidence of diff
+poly(O2LEVEL, 3)1 - buccal breathers, evidence of a linear component
+no evidence of poly 2, 3 component
+
+BREATHlun:poly()1 - does linear component differ to linear component of BREATHbuc
+  
+- BREATHbuc has a linear component, BREATHlung does not
+
+BREATHlung:poly2 - evidence of difference in quadratic term between two BREATHs
+BREATHlung:poly2 - no evidence of difference
+
+```{r summary}
+mullens.glmmTMB2b %>% summary()  #logit scale
+
+plogis(-1.8176) #0.139 ~14% of breaths were buccal breaths
+```
+Turn 1 var (o2) into 3 variables: linear, quadratic, and cubic components
+
+Basically fitting a multiple linear regression. Looking for the different unique components. Collectively come together to form the overall shape.
+
+Estimate is like weight:
+
+poly 1 - multiply by negative est and sum with poly 2 and poly 3 to get the point on the final line
+
+```{r poly O2}
+poly(mullens$O2LEVEL, 3)
+```
+
+finding trends and comparing if difference in each poly component between BREAT
+linear: evidence of buccal
+quadratic: evidence in lung
+cubic: evidence of lunc
+
+in the "spirit of parsimony" choose lowest order poly per level 
+
+    - buccal - linear
+    - lung - quadratic
+
+```{r emtrends}
+mullens.glmmTMB2b %>% emtrends(specs = 'BREATH', var = 'O2LEVEL', max.degree = 3) %>% # only want up to 3 to be sensible
+  summary(infer = TRUE)
+```
 
 # Further analyses {.tabset .tabset-faded}
 
+As O2 increases the lung breathers decline in rate of buccal breathing. Lung breathers seem to peak and then decline again. Reaches some optimum.
+
+How to calculate maximum? Could do the derivative... Or brute force it - predict more points.
+
+Only really useful for the lung breathers
+
+```{r max}
+mullens.grid <- with(mullens, list(O2LEVEL = modelr::seq_range(O2LEVEL, n = 1000),
+                                   BREATH = levels(BREATH)))
+
+newdata <- emmeans(mullens.glmmTMB2b, ~O2LEVEL|BREATH, at = mullens.grid, type = 'response') %>% 
+  as.data.frame()
+head(newdata)
+
+newdata %>% group_by(BREATH) %>% 
+  summarize(value = O2LEVEL[which.max(response)])
+
+```
+
+# $R^2$
+
+33% explained by fixed.
+81% for model as a whole.
+
+```{r R2}
+performance::r2_nakagawa(mullens.glmmTMB2b)
+```
+
+With sqrt transformation was able to predict negative breathing frequency.
 
 # Summary figures {.tabset .tabset-faded}
 
+newdata already generated
 
+```{r}
+ggplot(newdata, aes(y = response, x = O2LEVEL, color = BREATH)) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = BREATH, color = NA), alpha = 0.2) +
+  geom_line() +
+  scale_y_continuous('Buccal breathing rate', labels = function(x) 100*x) +
+  theme_classic()
+```
 
+```{r points}
+obs <- mullens %>% 
+  mutate(.fixed = predict(mullens.glmmTMB2b, re.form = NA),
+         .resid = residuals(mullens.glmmTMB2b),
+         PartialObs = plogis(.fixed + .resid))
+
+ggplot() +
+  geom_ribbon(data = newdata, aes(ymin = lower.CL, ymax = upper.CL, 
+                                  x=O2LEVEL, fill = BREATH), alpha = 0.3) +
+  geom_line(data = newdata, aes(y = response, x = O2LEVEL, color = BREATH)) +
+  geom_point(data = mullens, aes(y = pzBUC, x = O2LEVEL, color = BREATH), alpha = 0.2) +
+  geom_point(data = obs, aes(y = PartialObs, x = O2LEVEL, color = BREATH)) +
+  scale_y_continuous('Buccal breathing rate', labels = function(x) 100*x) +
+  theme_classic()
+```
 # References
