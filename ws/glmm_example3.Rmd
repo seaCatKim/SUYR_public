@@ -45,6 +45,7 @@ bibliography: ../resources/references.bib
 knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE,cache.lazy = FALSE, tidy='styler')
 options(tinytex.engine = 'xelatex')
 ```
+
 # Preparations
 
 Load the necessary libraries
@@ -99,6 +100,23 @@ tree        Jan     85     tree1
 **BIRD**        Categorical listing of individual bird repeatedly sampled.
 --------------- ------------------------------------------------------------------------------
 
+Difference in starling (semi-captive) masses based on roosting location. Each bird measured in Nov and Jan.
+
+Response: MASS - measurement, normal distribution
+
+> As adults, MASS should be far enough from zero that would have no negative predictions. If this was an issue could use gamma distribution.
+
+Random effect - block: BIRD
+Any variables where all levels occur in each bird: MONTH
+Variable where only one level applies to each bird: SITUATION
+
+**Hierarchy:**
+SITUATION
+BIRD (R)
+MONTH
+MONTH:SITUATION - interaction
+
+MONTH:SITUATION:BIRD - replication, if modeled this would be no variance
 
 
 <!-- ![Sampling design](../docs/figures/samplingDesign-1.png){width="700"} -->
@@ -122,8 +140,14 @@ starling = read_csv('../data/starling_full.csv', trim_ws=TRUE)
 glimpse(starling)
 ```
 
-Lets prepare the data:
+```{r factors}
+starling = starling %>% 
+  mutate(MONTH = factor(MONTH, level = c('Nov', 'Jan')),
+         SITUATION = factor(SITUATION),
+         BIRD = factor(BIRD))
+```
 
+Lets prepare the data:
 
 # Exploratory data analysis
 
@@ -141,25 +165,309 @@ intercepts associated with individual birds.
 
 ## Exploratory data analysis
 
+Normality and equal variance looks okay.
+
+```{r boxplot per SITUATION}
+ggplot(starling, aes(y = MASS, x = MONTH)) +
+  geom_boxplot() +
+  facet_grid(~SITUATION)
+```
+
+Intercept will be useful because every bird starts at different weight.
+
+Effect of month is fairly consistent - similar slopes. Some slopes vary though. Might want to consider random intercept-slopes.
+
+```{r}
+ggplot(starling, aes(y = MASS, x = MONTH, group = BIRD)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~SITUATION)
+```
+
+# Random effects structure
+
+Fit a couple of models with random structures and do we need intercept or slope-intercept.
+
+(1 | BIRD) - intercept
+(SITUATION | BIRD) - varies within BIRD, SITUATION does not make sense because only 1 SITUATION per BIRD
+(MONTH:SITUATION | BIRD) - could do, but not going to work
+
+Stablize random effects before adding fixed effects.
+
+```{r warning=TRUE}
+starling.glmmTMB1 <- glmmTMB(MASS ~ 1 + (1 | BIRD),
+                           data = starling, REML = TRUE)
+
+starling.glmmTMB2 <- glmmTMB(MASS ~ 1 + (MONTH | BIRD),
+                           data = starling, REML = TRUE,
+                           control = glmmTMBControl(optimizer = optim,
+                                                    optArgs = list(method = 'BFGS')))
+```
+
+AIC is the same - use the simpler model - intercept model.
+
+Magnitude of temporal change (MONTH) is similar for the birds.
+
+```{r test randeff models}
+AICc(starling.glmmTMB1, starling.glmmTMB2)
+```
+
+Can model variance, disperson... separate per group, or variance is related to the mean in some way. 
+
+Decided random effect structure - need in input fixed factors.
+
 
 # Fit the model {.tabset .tabset-faded}
 
+Update previous model with additive effects and interaction.
+
+MONTH * SITUATION 
+same as
+~ MONTH + SITUATION + MONTH:SITUATION
+
+If comparing fixed effects(~ MONTH + SITUATION and ~ MONTH * SITUATION) need to use `REML = FALSE`. Need to use ML - because way things are standarized...?
+
+Here can investigate full model first.
+
+```{r month and situation interaction}
+starling.glmmTMB1a <- update(starling.glmmTMB1, 
+                             .~. + MONTH*SITUATION, REML = TRUE)
+```
 
 
 # Model validation {.tabset .tabset-faded}
 
+Look good.
+
+Normal plot, not a massive deviation. Not a big dataset.
+
+4 roosting situations for 2 months - 8 groups for C.
+
+```{r fig.width = 10, fig.height=10}
+plot_model(starling.glmmTMB1a, type = 'diag')[-2] %>% 
+  plot_grid()
+```
+
+## DHARMa
+
+Look great - no issues.
+
+```{r dharma}
+starling.resid <- starling.glmmTMB1a %>% simulateResiduals(plot = TRUE)
+```
 
 # Partial plots {.tabset .tabset-faded}
 
+Partial plot for interaction. Don't worry about conditional or marginal 
+
+Only including 1 variable SITUATION or MONTH will not average across other levels of 2nd variable. Will be conditional on reference level.
+
+Effect of MONTH - yes
+
+Effect of SITUATION - not really
+
+Interaction? maybe - but subtle. Effect is very similar except for 'tree' roosting.
+
+```{r}
+starling.glmmTMB1a %>% ggpredict(terms = c('SITUATION', 'MONTH')) %>% 
+  plot(add.data=TRUE)
+
+starling.glmmTMB1a %>%  
+  ggemmeans(~SITUATION * MONTH) %>% 
+  plot(add.data=TRUE)
+```
+
+
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
+
+No evidence of an interaction. (Doesn't mean there isn't one necessarily)
+
+MASS of birds is higher in Jan than Nov, technically
+
+Intercept: Birds low variance - MASS consistent within birds. Adding more birds to MASS dataset would not increase the power.
+Residual variance: A lot more variability between a bird than actual treatments.
+
+To detect effect of month - can say we didn't need as many birds. With residuals variability could simulate data with less birds.
+
+But inside vs other could have not been detected because of a lack of power.
+
+Likely a whole bunch of other factors influence bird MASS. Increasing number of birds will have relatively minor impact to power - adding another variable (distance to food source) would be better for adding power.
+
+```{r summary}
+starling.glmmTMB1a %>% summary()
+```
+
+```{r tidy summary}
+starling.glmmTMB1a %>% tidy(conf.int = TRUE) %>%  kable() # pandoc will knit it in
+```
 
 
 # Further analyses {.tabset .tabset-faded}
 
+No interaction, but may want to split it up more to describe magnitude. Compare difference in effect of other and tree.
 
+Tukey's separately for red(Nov) and blue(Jan) or separately for each roost 'column'.
+
+Pairwise test between months within each SITUATION.
+
+Only comparing one time within situation - 2 months - not losing power. If were doing more than one comparison (e.g., 3 months) would lose power.
+
+Evidence of an effect for all SITUATION. Can report *magnitude* of the effect for these changes. Units in grams on absolute scale for gausiann distribution.
+
+```{r pair Month in situation}
+starling.glmmTMB1a %>% 
+  emmeans(~MONTH|SITUATION) %>%  # does the calculation, ggemmeans plots the calculations
+  pairs() %>% 
+  summary(infer = TRUE)
+```
+
+Can do other way if of interest. 
+
+(~ SITUATION | MONTH) would get 2 pairwise test comparing 4 SITUATIONS within.
+
+Is a difference in MASS change in Nov between other-tree.
+
+```{r situation conditional on month}
+starling.glmmTMB1a %>% 
+  emmeans(~ SITUATION | MONTH) %>%  # does the calculation, ggemmeans plots the calculations
+  pairs() %>% 
+  summary(infer = TRUE)
+```
+
+## Planned contrast
+
+Can sensibly justify before you even look at the data - compare natural structures to unnatural structures.
+
+Could also compare non-natural structures (inside,other) to natural (nestbox, tree). Averages of those levels.
+
+Need to take the mean (10 + 12)/2 = 10/2 + 12/2 so is 1/2. If three factors would 1/3 (IO, NT, 3rd...).
+
+Choose the factor you things is bigger as the + value in the covariance matrix. Will be the reference level of comparison.
+
+        IO v NT
+Inside    -1/2                
+Nestbox   1/2
+Other     -1/2
+Tree      1/2
+
+For Nov - ave of NT is 4.5 > than ave of IO.
+
+```{r planned contrast natural-unnatural}
+cmat <- cbind(c(-0.5, 0.5, -0.5, 0.5))
+
+starling.glmmTMB1a %>% 
+  emmeans(~ SITUATION|MONTH) %>% 
+  contrast(method = list(SITUATION = cmat)) %>% 
+  summary(infer = TRUE)
+```
+
+Overall effects averaged over MONTH - tells you in ouput.
+
+```{r planned ave over month}
+starling.glmmTMB1a %>% 
+  emmeans(~ SITUATION) %>% 
+  contrast(method = list(SITUATION = cmat)) %>% 
+  summary(infer = TRUE)
+```
+
+Gives number behind dots/CI on plot - start with asking for means.
+
+```{r give means}
+starling.glmmTMB1a %>% 
+  emmeans(~ SITUATION) 
+```
+
+Piping to pairs:
+
+```{r}
+starling.glmmTMB1a %>% 
+  emmeans(~ SITUATION) %>% 
+  pairs()
+```
+
+## $R^2$
+
+r.squared - marginal/fixed effect explaining 61.85 of variance
+  - random effects not really adding to explaining variability 62.5%
+  
+Still want random effects structure as an issue of dependence was introduced and need to account for it - the experimental design.
+
+More important is the R2m - fixed effects - but might want to say the above, but may have already mentioned as there was very little 
+
+> R2c could be high - 95% but with low R2m, fixed is not explaining a lot of the variability.
+
+```{r R2}
+starling.glmmTMB1a %>% r.squaredGLMM()
+starling.glmmTMB1a %>% performance::r2_nakagawa()
+```
 
 # Summary figures {.tabset .tabset-faded}
 
+If random effects did have effect - raw data would not accurately 'match' with this figure as the raw data hasn't been standardized as the residuals.
+
+```{r predict and plot}
+newdata <- starling.glmmTMB1a %>% 
+  emmeans(~SITUATION * MONTH) %>% 
+  as.data.frame()
+
+ggplot(newdata, aes(y = emmean, x = SITUATION, fill = MONTH)) +
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL), shape = 21,
+             position = position_dodge(0.2)) +
+  theme_classic()
+```
+
+Plotting the raw data on the above would be misleading as they are not taking into account the random effects.
+
+Any given point have distance between it and prediction. 
+
+- know prediction and residual, can reconstruct the observation
+- residuals based on whole model, take into account randome effect (will shrink noise)
+- so predicted point might be less than raw data
+
+Random effect here has so little impact - might as well put raw data on. Doing the process above here.
+
+First predict
+
+80 predicted values for each of 80 observations
+
+Conditional so knows what month and situation is for each observation. `re.form = NA` ignoring random effects. Same predicted value for situation/month combo - average across treatment.
+
+Including random effect would predict for individual birds.
+
+```{r predict}
+predict(starling.glmmTMB1a, re.form = NA) # condition prediction
+```
+
+Residuals taking into account the random effects. Do take into account each individual observation.
+
+```{r residuals}
+residuals(starling.glmmTMB1a, type = 'response')
+```
+
+Combine predicted and residuals into a dataframe
+
+```{r dataframe}
+obs <- starling %>% 
+  mutate(Pred = predict(starling.glmmTMB1a, reform = NA),
+                  Resid = residuals(starling.glmmTMB1a, type = 'response'),
+         Fit = Pred + Resid)
+
+obs %>% head()
+```
+
+If random effects did have a big impact, points would be much tighter around the mean.
+
+Can put raw data, but point of adding random effects in the model was to reduce variability - so points will can be standarized to represent that. Raw data could
+
+Not about visualizing raw data - about visualizing the model and these standardized points better reflect the model.
+
+```{r plot partial effects with pred plus resid points}
+ggplot(newdata, aes(y = emmean, x = SITUATION, fill = MONTH)) +
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL), shape  =21,
+                  position = position_dodge(0.2)) +
+  geom_point(data = obs, aes(y = Fit, color = MONTH), alpha = 0.5, position = position_jitter(height = 0)) + # don't want to jitter height so level with bars
+  theme_classic()
+```
 
 # References
 

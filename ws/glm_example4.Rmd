@@ -71,8 +71,15 @@ library(tidyverse) #for data wrangling
 # Scenario
 
 @Loyn-1987-1987 modelled the abundance of forest birds with six predictor
-variables (patch area, distance to nearest patch, distance to nearest larger
-patch, grazing intensity, altitude and years since the patch had been isolated).
+variables (patch area, distance to nearest patch, distance to nearest larger patch, grazing intensity, altitude and years since the patch had been isolated). 
+
+Point quadrat considered a pseudo-replicate of a site. Averaged them together. 
+
+Nested structure more ideal. 
+
+Problem with data, raw data not kept. Averages hard to fit with a distribution. Should follow Gaussian which is unbounded so could predict less than 0 birds.
+
+With the raw data (counts) could fit a Poisson which cannot be negative.
 
 ![Regent honeyeater](../resources/regent_honeyeater_small.jpg){width="165" height="240"}
 
@@ -92,39 +99,35 @@ ABUND   DIST   LDIST   AREA   GRAZE   ALT   YR.ISOL
 **YR.ISOL**   Number of years since the patch was isolated - predictor variable
 ------------- ------------------------------------------------------------------------------
 
-The aim of the analysis is to investigate the effects of a range of predictors
-on the abundance of forest birds.
+DIST and LDIST could be the same patch.
+
+The aim of the analysis is to investigate the effects of a range of predictors on the abundance of forest birds.
+
+One response (the birds) and six predictor variables.
 
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
 loyn = read_csv('../data/loyn.csv', trim_ws=TRUE)
 glimpse(loyn)
+
+# GRAZE as categorical variable
+loyn <- loyn %>% 
+  mutate(fGRAZE = factor(GRAZE)) # f reminder is factor, can rename
 ```
 
 # Exploratory data analysis {.tabset .tabset-faded}
 
 
-This is an application of multiple regression.  The response variable in this
-instance is a little awkward in that it appears to be an average of multiple
-point quadrats rather than a pure count.  Central limits theorem suggests that
-averages should follow a normal distribution and thus we might expect that it is
-reasonable to model this bird abundance against a Gaussian distribution.
+This is an application of multiple regression.  The response variable in this instance is a little awkward in that it appears to be an average of multiple point quadrats rather than a pure count.  Central limits theorem suggests that averages should follow a normal distribution and thus we might expect that it is reasonable to model this bird abundance against a Gaussian distribution.
+
 However, this has the potential to become problematic since a Gaussian
-distribution can extend below zero whereas this is clearly not logical for bird
-abundance.  As a result, we might find the at the model can predict bird
-abundances less than zero.   
+distribution can extend below zero whereas this is clearly not logical for bird abundance.  As a result, we might find the at the model can predict bird abundances less than zero.   
 
 If this were our own analysis, we might first attempt to model these data
-against a Gaussian distribution and then explore whether this could lead to
-negative predictions - it may be that the bird abundances are sufficiently high
-that the issue of negative predictions is not realised over sensible ranges of
-the predictors.  If it turns out that there is an issue, then we would explore
-alternatives.
+against a Gaussian distribution and then explore whether this could lead to negative predictions - it may be that the bird abundances are sufficiently high that the issue of negative predictions is not realised over sensible ranges of the predictors.  If it turns out that there is an issue, then we would explore alternatives.
 
-In this case, there is an issue - the model does indeed predict fewer than zero
-birds for some ranges of some of the predictors.  Hence, we will skip straight
-to the alternatives:
+In this case, there is an issue - the model does indeed predict fewer than zero birds for some ranges of some of the predictors.  Hence, we will skip straight to the alternatives:
 
 - we could log-transform the response.
 $$
@@ -132,8 +135,7 @@ log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i = \beta_0 + \beta_1 X_1 + ...
 $$
    - the expected values will be the mean of logs
-   - due to the transformation, both $\mu$ and $\sigma^2$ are modelled on a log
-     scale.
+   - due to the transformation, both $\mu$ and $\sigma^2$ are modelled on a log scale.
 $$
 y_i \sim{} \mathcal{N}(e^{X\beta}, e^{\sigma^2})\\
 $$
@@ -167,18 +169,62 @@ We will explore each of these options:
 
 - in doing so, we need to consider the patterns of variance 
 - linearity
-- (multi)collinearity - correlated predictors should not be in the same model
-  together lest they compete.
+- (multi)collinearity - correlated predictors should not be in the same model together lest they compete.
 
 
+## Assumptions
+
+- normality
+- homogeneity of variance
+- independence - need to know about spatial, temporal
+- linearity
+- multicollinearity
 
 ## Scatterplot matrix
 
+Displays each variable agains each other.
 
-## Specific scatterplots
+This function is in base.
 
+Look at predictors - can handle the response separately.
+
+First look at boxplots. Nonsymmetrical boxplots lead to issues - need to address.
+
+Do not assume that predictors follow a particular distribution (normal) but assume they are symmetrical. Cannot be skewed, then have outliers and overly influential points.
+
+DIST, LDIST, AREA - skewed
+YR.ISLO - bit skewed in other direction. Harder to correct. Look at later
+
+```{r scatterplot}
+scatterplotMatrix(~ ABUND + DIST + LDIST + AREA + fGRAZE + ALT + YR.ISOL,
+                  data = loyn, 
+                  diagonal = list(method = 'boxplot')) # better for less data
+```
+
+Transform skewed predictor variables. 
+
+Look for grossly obvious violations.
+
+```{r scatterplot w transformations}
+scatterplotMatrix(~ ABUND + log(DIST) + log(LDIST) + log(AREA) + fGRAZE + ALT + YR.ISOL,
+                  data = loyn, 
+                  diagonal = list(method = 'boxplot')) # better for less data
+```
+ 
+Top row first: response v predictors.
+
+Can check linearity and homogeneity of variance.
+
+Check multicollinearity - log.DIST and log.LDIST look linear.
+Need to check whether one predictor is corelated is remaining set of predictors - hard to visualize with scatter plot. **Variance inflation** does exactly this based on $R^2$.
+
+Good $R^2$ value? ~0.6. 
 
 # Fit the model {.tabset .tabset-faded}
+
+Gaussian will end up with negative estimates.
+Log-normal distribution. (Same assumptions as normal). Gaussian log-link.
+Gamma (similar assumptions)
 
 ## Gaussian (log-transformed)
 Model formula:
@@ -188,14 +234,12 @@ log(y_i) = \mathcal{N}(\mu_i, \sigma^2)\\
 \mu_i = \beta_0 + \beta_1 X_1 + ...
 $$
 
-where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a
-model matrix representing the additive effects of the scaled versions of
-distance (ln), distance to the nearest large patch (ln), patch area (ln),
-grazing intensity, year of isolation and altitude on the abundance of forest
-birds.
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and altitude on the abundance of forest birds.
 
 
 ## Gaussian (log-link)
+
+Not ideal - should fit distribution to the response.
 
 Model formula:
 $$
@@ -203,10 +247,33 @@ y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
 log(\mu_i) = \boldsymbol{\beta} \bf{X_i}
 $$
 
-where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
-the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
-altitude on the abundance of forest birds.
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and altitude on the abundance of forest birds.
 
+More complex the model more important to center continuous variables.
+
+Want 'ranges' of factor levels to be the same.
+
+Transformation of scales in line. Can mutate to transform variables, but better in line so model can back-transform.
+
+Need to do it in the right order. Cannot log centered data (0). Log first, then center.
+
+$\beta$s produced are partial slopes - effect of $x_1$ at the average of remaining $x_2...x_n$.
+
+```{r gaus log-link}
+loyn.glm1 <-glm(ABUND ~ scale(log(DIST), scale = FALSE) +
+                  scale(log(LDIST), scale = FALSE) +
+                  scale(log(AREA), scale = FALSE) +
+                  fGRAZE + 
+                  scale(ALT, scale = FALSE) +
+                  scale(YR.ISOL, scale = FALSE),
+                data = loyn, family = gaussian(link = 'log'))
+```
+
+Get two columns when have categorical predictors. Make it fair in the presence of categorical variables. Still look for VIF > 3.
+
+```{r log-normal VIF}
+loyn.glm1 %>% vif()
+```
 
 ## Gamma (log-link)
 
@@ -216,35 +283,364 @@ y_i = \mathcal{Gamma}(\mu_i, \sigma^2)\\
 log(\mu_i) = \beta_0 + \beta_1 X_1 + ...
 $$
 
-where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of
-the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
-altitude on the abundance of forest birds.
+where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the additive effects of the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and altitude on the abundance of forest birds.
 
+```{r gamma}
+loyn.gamma <- glm(ABUND ~ scale(log(DIST), scale = FALSE) +
+                  scale(log(LDIST), scale = FALSE) +
+                  scale(log(AREA), scale = FALSE) +
+                  fGRAZE + 
+                  scale(ALT, scale = FALSE) +
+                  scale(YR.ISOL, scale = FALSE),
+                data = loyn, family = Gamma(link = 'log'))
+```
+
+No difference to log-normal... Only looks at predictors and have the same predictors. 
+
+```{r gamma vif}
+loyn.gamma %>% vif()
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## autoplot
+
+Looks okay. Not fantastic but acceptable.
+
+```{r autoplot log-normal}
+loyn.glm1 %>% autoplot(which = 1:6)
+```
+
+Similar to log-normal plot. 
+
+```{r autoplot gamma}
+loyn.gamma %>% autoplot(which = 1:6)
+```
+
+## DHARMa
+
+Looks good.
+
+```{r dharma log-normal}
+loyn.resid <- loyn.glm1 %>% simulateResiduals(plot = TRUE)
+```
+
+Right side is a problem. Puts smoothers through your data in quantiles. Some evidence of nonlinearity that the gamma did not handle. **So log-normal better choice.**
+
+```{r dharma gamma}
+loyn.gamresid <-loyn.gamma %>% simulateResiduals(plot = TRUE)
+```
+
+From this point on, we will only proceed with the Gaussian (log-link) model.
 
 # Partial plots {.tabset .tabset-faded}
 
+Effect of each predictor keeping other predictors constant. Done all the back-transformations.
+
+No effect of DIST, ALT, YR.ISOL.
+
+```{r log-normal partial plots, fig.width=10, fig.height=10}
+loyn.glm1 %>% 
+  plot_model(type = 'eff', show.data = TRUE, dot.size = 0.5) %>% 
+  plot_grid()
+```
+
+Transform a few: just for diagnostics, doesn't need to be pretty.
+
+```{r transformed partials, fig.width=10, fig.height=10}
+plot_grid(list(
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'DIST') + scale_x_log10(),
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'LDIST') + scale_x_log10(),
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'AREA') + scale_x_log10(),
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'fGRAZE'),
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'ALT'),
+  loyn.glm1 %>% plot_model(type = 'eff', terms = 'YR.ISOL')
+))
+```
 
 # Caterpillar plot {.tabset .tabset-pills}
 
-## Gaussian (log-transformed)
+## plot_model caterpillar 
 
-## Gaussian (log-link)
+Red is negative, blue positive.
 
-## Gamma (log-link)
+Evidence of a a positive area effect - bigger area (technically only for GRAZE1), more birds.
 
+Clear effect of GRAZE5 has fewer birds than GRAZE1.
+
+```{r plot model catepillar}
+loyn.glm1 %>% plot_model(type = 'est')
+```
+
+## plot_model transformed to factor scale (not link)
+
+```{r transformed}
+loyn.glm1 %>% plot_model(type = 'est', transform = 'exp', show.values = TRUE)
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+AREA significant positive effect for GRAZE1. Not included interactions (assumed parallel lines) so rate of change (slope) is same for all levels of factor.
+
+Evidence of difference for GRAZE1 and GRAZE 5. Tested at the average. 
+
+```{r log-normal summary}
+loyn.glm1 %>% summary()
+``` 
+
+**$R^2$**
+
+```{r R2}
+MuMIn::r.squaredLR(loyn.glm1)
+```
+
+Intercept (22) is average number of birds in grazing level 1.
+
+```{r tidy table back-transformed}
+loyn.glm1 %>% tidy(conf.int = TRUE, exponentiate = TRUE)
+```
+
+Are there any habitat variables important to the birds? Which ones are most important? 
+
+Magnitude of the effect. Per one unit so slope is **dependent on the scale of your predictor**.
+
+Can scale so can directly compare the slopes. Can do afterwards.
+
+Standarized coeffiecients so they are all on the same scale and can see which predictors are most important (greatest effect).
+
+GRAZE5 and AREA most important, but GRAZE5 is nearly 4x more important than AREA looking at estimates.
+
+```{r std.coef}
+loyn.glm1 %>% std.coef(partial.sd = TRUE)
+```
 
 # Further analyses {.tabset .tabset-faded}
 
-From this point on, we will only proceed with the Gaussian (log-link) model.
+## Model selection
+
+Some predictors small effect. Get rid of it and simplify model.
+
+History of model selection:
+Step-wise regression - kick out ns predictors with highest p-value. Reliant on 'more/less' significant.
+With modern computing can compare all options - fishing for best model. Mathematically some model will be the best. Does not mean it is sensible.
+
+Dredging - come up with some models (~10), test, and find best model. Not favored. Best model but no idea why. Hard to justify.
+
+Proper model selection from sensible candidates.
+
+Propose some models that speak to different aspects of the ecology. If they are useful, then can explain them.
+
+Distance - something to do with connectivity.
+Area - something to do with habitat vs how far apart.
+History of the patch - grazing intensity, isolation.
+
+R can update models
+
+## Connectivity model
+
+First argument for GLM is the formula.
+'.' means 'leave what i used to have' - in this case the response variable ABUND.
+
+New right hand side of the model. Include the interactive effect of DIST and LDIST.
+
+If have 2 predictors and the interaction have to be correlated to the interaction. Isn't that multicollinearity? Yes, but not if centered (mathematical trick)
+
+Three reasons to center:
+
+1. Mathematical efficiency
+2. Interpreting intercepts
+3. Corrlations with interactions
+
+```{r connectivity}
+loyn.glm1a <- loyn.glm1 %>% 
+  update(. ~ scale(log(DIST), scale = FALSE) * scale(log(LDIST), scale = FALSE))
+```
+
+## Habitat
+
+```{r area graze}
+loyn.glm1b <- loyn.glm1 %>% 
+  update(. ~ scale(log(AREA), scale = FALSE) * fGRAZE)
+```
+
+```{r hab and iso}
+loyn.glm1c <- loyn.glm1 %>% 
+  update(. ~ scale(log(AREA), scale = FALSE) * fGRAZE * scale(YR.ISOL, scale = FALSE))
+```
+
+## Altitude
+
+```{r alt}
+loyn.glm1d <- loyn.glm1 %>% 
+  update(. ~ scale(ALT, scale = FALSE))
+```
+
+
+## Null model
+
+Don't want to compare to each other. Find out if any are useful, compare to a useless model - the null model.
+
+If are better than the null model than they are useless.
+
+```{r null}
+loyn.null <- loyn.glm1 %>% update(. ~ 1)
+```
+
+## Compare
+
+AICc corrected for small sample size.
+
+Connectivity model AIC higher than null - useless. Maybe they can fly. 
+Other models better than null.
+
+Don't compare $R^2$ of each model.
+
+df used/consumed - not df leftover in the model, in a test. Null model only had 2 df used - intercept, standard deviation. df for the model is 56 (observation) - 2. df is tiebreaker if same AIC. Want lower consumed df.
+
+Would put in the text or supplement to support which model is useful and predictors describing predictors - spell it out. 
+
+```{r AICc}
+AICc(loyn.glm1a, loyn.glm1b, loyn.glm1c, loyn.glm1d, loyn.null)
+```
+
+### Likelihood ratio test
+
+Use a likelihood ratio test comparing two models at a time.
+
+Both AIC LRT based on same thing - deviance.
+
+No evidence connectivity model is better.
+
+```{r connectivity v null}
+anova(loyn.null, loyn.glm1a, test = 'LRT')
+```
+
+```{r hab v null}
+anova(loyn.null, loyn.glm1b, test = 'LRT')
+```
+
+# Look at the area and grazing model
+
+## Partial plot of area and graze model
+
+Summary of area and graze model:
+
+When have an interaction, look at the interactions first. If all of interactions are non-significant, it implies they are all parallel. If interactions are significant, cannot make sweeping statements about the main effects.
+
+Intercept is average number of birds at GRAZE1 (on a log scale) and mean AREA. 
+
+scale(log(AREA), scale = FALSE) - rate of change (slope) associated with area just for first group.
+
+GRAZE3 has a different slope than GRAZE1. Estimate is the difference in slope compared to GRAZE1. 
+
+GRAZE5 - significantly different than GRAZE1 at the mean AREA
+
+```{r area and graze plot}
+loyn.glm1b %>% summary()
+```
+
+We know what the trend is for GRAZE1. We know what GRAZE2-5 are not, but not what they are. Can do a similar thing to a planned comparison to look at the slopes. Could calculate from estimates in summary, but difficult to get the CIs.
+
+Have trend/slope for each of grazing level - GRAZE1 same as summary table and have CIs.
+
+No p-values because there is no hypothesis test. Just asking for the slopes, not comparing anything.
+
+```{r emtrends}
+loyn.glm1b %>% emtrends(~ fGRAZE, var = 'log(AREA)') # need to tell which variable we want the slopes for
+```
+
+```{r emtrends}
+loyn.glm1b %>% emtrends(~ fGRAZE, var = 'log(AREA)')
+```
+
+No significant p-values because of lost power. Would need to do planned comparisons to retain power.
+
+Can back-transform values with regrid - depends on order.
+
+```{r pairwise comparison of slopes of GRAZE}
+loyn.glm1b %>% emtrends(~ fGRAZE, var = 'log(AREA)') %>% 
+  pairs() %>% 
+  summary(infer = c(TRUE,FALSE)) # for CI, p-values
+```
+
+```{r partial plot area and graze}
+loyn.glm1b %>% ggemmeans(~ AREA|fGRAZE) %>% # takes care of back-transformation
+  plot(add.data = TRUE, jitter = FALSE)
+```
 
 
 # Summary figures
 
+## Prediction grid
+
+```{r make prediction grid}
+loyn.grid <- with(loyn, 
+                  list(fGRAZE = levels(fGRAZE), 
+                       AREA = seq_range(AREA, n = 100)))
+
+# with piping
+loyn %>% with(list(fGRAZE = levels(fGRAZE), 
+                       AREA = seq_range(AREA, n = 100)))
+```
+
+## Predict
+
+Predict trend for area conditional on (separately) for each fGRAZE (level).
+
+AREA + fGRAZE implied additive.
+AREA * fGRAZE implies interaction.
+AREA | fGRAZE more inline with thinking about the model.
+
+Does not make a difference to the output.
+
+Rows of data? 100 per fGRAZE level = 500
+
+```{r predict on prediction grid}
+newdata <- loyn.glm1b %>% 
+  emmeans(~ AREA|fGRAZE, at = loyn.grid, type = 'response') %>% # could use regrid() instead of 'type = 'response''
+  as.data.frame()
+
+head(newdata)
+```
+
+## Plot
+
+Specifying something inside the `aes()` will have a scale determined by the data.
+
+Defining fill will give a legend - map to fill variable.
+
+Outside of the `aes()` will specifically setting.
+
+Log the axes (altering spacing) vs log the data (make your reader do mental gymnastics).
+
+Log-link applies to response while logging predictor. Independent.
+
+%o% means outer product:
+vector of c(1, 2, 5, 10)
+10^(0:2) = 10^0, 10^1, 10^2
+
+Multiplying 10^(0:2) to each value of the vector. To adjust range just (0:2) exponent range.
+
+```{r plot}
+p <-  ggplot(newdata, aes(y = response, x = AREA)) +
+  geom_ribbon(aes(ymin = asymp.LCL, ymax = asymp.UCL, fill = fGRAZE),
+              color = NA, alpha = 0.2) + # no color outline on ribbon
+  geom_line(aes(color = fGRAZE)) +
+  geom_point(data = loyn, aes(x = AREA, y = ABUND)) +
+  scale_x_log10(expression(Habitat~Patch~Area),labels = scales::comma) +
+  scale_y_log10(expression(Abundance),
+                breaks = as.vector(c(1, 2, 5, 10) %o% 10^(0:3))) +
+  theme_classic()
+p
+```
+
+Adjust visibility of legend lines to see dashed lines or change size of points as they are automatically the same size as the plot - use `guides()`.
+
+```{r adjust legend}
+p +
+  theme(legend.position = c(0.01, 1), # 0-1, 0 top left
+        legend.justification = c(0,1)) + # which corner to justify, top left
+# p + legend_move(position = 'bottom')
+```
 
 # References
