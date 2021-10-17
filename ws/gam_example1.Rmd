@@ -64,9 +64,6 @@ library(tidyverse) #for data wrangling
 # Scenario
 
 This is an entirely fabricated example (how embarrising).
-So here is a picture of some Red Grouse Chicks to compensate..
-
-![Red grouse chicks](../resources/redgrousechicks.jpg){width="251" height="290"}
 
 Format of data.gp.csv data file
 
