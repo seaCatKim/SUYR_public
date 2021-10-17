@@ -1,0 +1,93 @@
+---
+title: "Day 4 Intro to (Generalized) Linear Mixed Effect Models"
+author: "Catherine Kim"
+date: "07/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## (Generalized) Linear Mixed Models 
+
+Variance expands out to more than just variance being equal. Means might be different, but observations come from equally varied populations (diagonal on the matrix). **Covariance** is the degree to which things covary, like the degree to which things correlate. Zero covariance = independence. The upper/lower diagonal of a covariance rel
+
+Correlation is the degree to which things trend together (-1 to 1). Realted to covariance which is not divided by standard deviation. 
+
+What influences power? 
+
+1. Samples size
+2. Effect size - difference in weight between elephants and mice vs male/female mice
+3. Variance
+
+To increase power can:
+
+1. Increase sample size - logistical, ethical, financial constraints
+2. Increase effect size 
+3. **Decrease variance**
+
+Dummy variable in Poisson model to soak up variance is an example of reducing variance.
+
+From a design perspective, try to control other variables. Surveys might add more variables.
+
+$$
+Power \sim \frac{n (effect size)}{variance}
+$$
+
+# Hierarchical models
+
+## EXample 1
+
+6 sites, 3 burnt, 3 unburtn site
+
+Put pit traps in sites for ants. Variability in where you put the trap in the site.
+
+How to combat that?
+
+1. Add more burn sites - not reasonable.
+2. Add more ant traps per site - still only have 3 replicates of burn sites. More traps are pseudo-repliates. Can add more traps and average, changing variance not n (sample size). But makes chosing distribution of average of counts difficult.
+3. Make it a **nested** design. Introduce an additional factor and need to account for that.
+    - Automatically violates independence.
+    - Need to not only say model has an extra factor (trap) but also account for this dependency problem.
+    
+## Example 2
+
+Blocking design - put each condition in a small area. More likely for area to be homogeneous. Randomized complete design - treatments are randomized in each block. Block treatments together - yet these are not independent.
+
+Cannot do in all cases like time points called **repeated measures**. Blocking design that cannont be randomized.
+
+Instead of assuming covariance is 0 (i.e., independent) between observations, assume they are correalted. 
+
+## Different designs
+
+> Analyze these the same.
+
+Fully crossed
+
+Nested - main treatment occurs above the level of block. Burned/Unburnt example.
+
+Randomized block  - each block has every combination.
+
+Split-plot (partially nested) - combination - treatments above/below the block design.
+
+**Mixed Effects Models** are a mixture of fixed and random effects. Technically all models are mixed effects... 
+
+Superficial definitions of fixed/random.
+
+**Fixed** (all previously dealt with) - levels measure are the ones you are interested in. e.g., seasons, density (high/low), barnacles (alg1, alg2, naturaly bare, scraped)
+
+**Random** - measured some levels and want to extrapolate to all possible levels. e.g., sites (random selection of all possible). Typically not intersted in the difference between levels (sites 1 vs 2). Interested in the variance.
+
+> Rule on number of levels for a random factor? < 5 can inflate your variance.
+
+Could model a variable as both fixed/random - years - but more for a stabilizing effect. 
+
+## Random intercept and random slope
+
+Slope the same, intercept different - accounting for block. Assumes lines are parallel.
+
+> Actually measuring the variance of those intercepts.
+
+Slope and intercept changes - like having an interaction between x-axis and block or fixed and random effects.
+
