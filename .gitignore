@@ -2,7 +2,12 @@
 *_cache
 *_files
 *.log
+*.html
 resources/Rmarkdown-examples/*.pdf
 resources/Rmarkdown-examples/*.png
 resources/Rmarkdown-examples/*.docx
 resources/Rmarkdown-examples/E*.md
+resources/Rmarkdown-examples/E*.html
+.Rproj.user
+.Rproj
+.Rhistory
