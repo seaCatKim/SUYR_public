@@ -49,7 +49,7 @@ knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 
 Load the necessary libraries
 
-```{r libraries, results='markdown', eval=TRUE, warning=TRUE, message=FALSE}
+```{r libraries, results='markdown', eval=TRUE, warning=FALSE, message=FALSE}
 library(mgcv)      #for GAMs
 library(gratia)    #for GAM plots
 library(emmeans)   #for marginal means etc
@@ -106,11 +106,31 @@ LATITUDE LONGITUDE reef.alias Water_Samples Region Subregion Season waterYear NO
 
 # Read in the data
 
+reef.alias - name of site collecting water
+in 6 Regions - maybe regions behave differently.
+Season - maybe water chemistry behaves differently based on season.
+waterYear - year of collection
+Dt.num - date converted into a number. 2021.5 is halfway through 2021.
+
+Date objects very useful for graphing but not modeling. Date objects big.
+
+Lots of chemicals. Concentrate on NOx = NO2 + NO3.
+
+Describe changes in NOx over time. 
+
 ```{r readData, results='markdown', eval=TRUE}
 wq = read_csv('../data/aims.wq.csv', trim_ws=TRUE)
 glimpse(wq)
 ```
 
+Have not releveled anything but could for Season etc.
+
+```{r factorize}
+wq <- wq %>% mutate(reef.alias = factor(reef.alias),
+                    Region = factor(Region),
+                    Subregion = factor(Subregion),
+                    Season = factor(Season))
+```
 
 # Exploratory data analysis
 
@@ -122,29 +142,590 @@ $$
 
 where $\beta_0$ is the y-intercept. $f(Date)$ and $f(Month)$ indicate the additive smoothing functions of the long-term temporal trends and the annual seasonal trends respectively. 
 
+Zeros - probably detection limits.
 
+Design of monitoring rampped up in 2016 - realized was not sampling enough.
+
+Whole GBR here. Hard to detect any patterns.
+
+```{r data viz}
+ggplot(wq, aes(y = NOx, x = Date)) + geom_point()
+```
+
+Facet by reef.alias.
+
+Still quite noisy. Can see newer sites.
+
+Patterns not really linear. Pulse events, seasonallity, etc.
+
+Bounded by 0, but no upper linear. Skewed data. Maybe present on non-linear y-scale. All panels are on the same scale which might obscure patterns.
+
+```{r data viz facet}
+ggplot(wq, aes(y = NOx, x = Date)) + 
+  geom_point() +
+  facet_wrap(~ reef.alias)
+```
+
+Fit smoothers through data and look at basic patterns. Change y-scale.
+
+Reefs with long-term data seem to have similar pattern.
+
+Best to start with a simple model and build it up. Start with one reef before whole GBR.
+
+```{r add smoothers}
+ggplot(wq, aes(y = NOx, x = Date)) + 
+  geom_point() +
+  geom_smooth() +  
+  facet_wrap(~ reef.alias, scales = 'free_y') +
+  scale_y_continuous(trans = scales::pseudo_log_trans()) #pseudo for 0s
+```
 
 # Data preparations
 
+Graphing is great to use the data but not appropriate for analysis. Dates very large numbers. Dates referenced to Jan 1 1970. 
+
+Gets worse with time.  Referenced as seconds since Jan 1 1900.
+
+Calculating likelihoods etc. are products so difficult to calculate with large numbers.
+
+```{r date examples}
+as.Date('2021-10-18', format = '%Y-%m-%d')
+
+as.integer(as.Date('2021-10-18', format = '%Y-%m-%d'))
+
+as.integer(as.POSIXct('2021-10-18 11:04:02', format = '%Y-%m-%d %H:%M:%S'))
+```
+
+Best to convert into decimal format instead of date. Not disimmilar for spatial, don't want to be working in cm. Choose a sensible scale.
+
+```{r converte date to numeric}
+wq <- wq %>% mutate(Dt.num = lubridate::decimal_date(Date))
+
+decimal_date(as.POSIXct('2021-10-18 11:04:02', format = '%Y-%m-%d %H:%M:%S'))
+```
 
 # Simple model (Pandora only) {.tabset .tabset-faded}
 
+Filter Pandora reef data.
+
+```{r only Pandora}
+wq.pandora <- wq %>% filter(reef.alias == 'Pandora', !is.na(NOx))
+```
+
+Just plot Pandora data.
+
+Limit of detection in early sampling was 0.01.
+
+```{r plot Pandora}
+ggplot(wq.pandora, aes(y = NOx, x = Date)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(trans = scales::pseudo_log_trans())
+```
+
+Identified from data viz that linear trend would be nonesense. Straight to GAM.
+
+Lower limit is detection of sampling, no upper limit. Data is skewed toward 0s.
+Start with Gaussian, good for comparison.
+
+Did not specify number of knots. Default is 12 have have plenty of data for it.
+
+Penalty via REML.
+
+```{r pandora gam}
+wq.gam1 <- gam(NOx ~ s(Dt.num), data = wq.pandora, 
+               family = 'gaussian', 
+               method = 'REML')
+```
+
+Log-normal like model. Behaves like log-normal but not strictly speaking.
+
+```{r pandora log-normal}
+wq.gam2 <- gam(NOx ~ s(Dt.num), data = wq.pandora, 
+               family = gaussian(link = 'log'), 
+               method = 'REML')
+```
+
+Gamma - for natural applications use log link instead of natural link. Does not include 0.
+
+Zero inflated Gamma - Hurdle model.
+
+Censured model - the 0.01 detection limit for Bayesian. Can be useful. Work out probability distribution around detection limit.
+
+```{r pandora Gamma}
+wq.gam3 <- gam(NOx ~ s(Dt.num), data = wq.pandora, 
+               family = Gamma(link = 'log'), 
+               method = 'REML')
+```
+
+Tweedie - somewhere between a Poisson (includes 0, Poisson-y shape) and a Gamma (does not have to be integers, has dispersion built in). Poisson mean and variance must be equal. Depending on data will be more like Poisson or Gamma and can hover inbetween. Not available in a lot of modeling packages. 
+
+```{r pandora Tweedie}
+wq.gam4 <- gam(NOx ~ s(Dt.num), data = wq.pandora, 
+               family = tw(link = 'log'), # tw = Tweedie
+               method = 'REML')
+```
+
+Compare the models - should check assumptions for all but here just doing for selected model.
+
+Gamma model is lowest AICc. Fewer df consumed than Tweedie.
+
+```{r AIC}
+AICc(wq.gam1, wq.gam2, wq.gam3, wq.gam4)
+```
+
+## Pandora Gamma model validation 
+
+Was able to reach an optimum degree of wiggliness. 
+
+If turns out that outputs suggest over constrained then double the number of knots.
+
+p-value - any evidence it's over contrained. No significant = no.
+
+```{r k.check}
+k.check(wq.gam3)
+```
+
+All look pretty good.
+
+Q-Q - very good.
+Residuals - points on left are the 0.01 lower limit.
+Histogram - roughly symmetrical.
+Observed v fitted - not great at predicting. Gets noisier at higher values. May be it's just the way it is. Consider there are other covariates could add to the model to improve.
+
+```{r appraise pandora gamma}
+appraise(wq.gam3)
+```
+
+Q-Q looks great.
+Right has a bit of an upward trend.
+
+```{r Pandora DHARMa}
+wq.resid <- simulateResiduals(wq.gam3, plot = TRUE)
+```
+
+Try and explain some of this variability.
+
+## Partial plot
+
+```{r draw pandora gamma}
+draw(wq.gam3)
+```
+
+## Model investigation
+
+On a log scale with the Gamma. Centered on 0. More the pattern we are interested on this plot.
+
+Evidence that it is not a straight flat line. edf - value of how wiggly it is. Takes into account the number of knots and 3rd order polynomial. 
+
+Dev explained ~56% of variability.
+
+GAMs from other models. Describing the relationship. It increased, some evidence it declined than increased again. Describing nature of relationship vs whether relationship exists or not.
+
+```{r pandora gamma summary}
+wq.gam3 %>% summary()
+```
 
 # Exploring more models {.tabset .tabset-faded}
 
+## Season interaction GAM
+
+Explain more of the variability - wet vs dry seasons. Add an interaction.
+
+`Season + s(Dt.num, by = Season)` see if there is a difference between intercepts between season + the trends by Season. 
+
+```{r pandora gam season interaction}
+wq.gam5 <- gam(NOx ~ Season + s(Dt.num, by = Season), # separate smoother for each Season
+               data = wq.pandora,
+               family = Gamma(link='log'), method = 'REML')
+```
+
+No evidence either season is overconstrained.
+
+```{r season gam k.check}
+k.check(wq.gam5)
+```
+
+```{r season appraise}
+appraise(wq.gam5)
+```
+
+```{r seaons DHARMa}
+wq.resid <- simulateResiduals(wq.gam5, plot = TRUE)
+```
+
+Whenever data is collected over time, should check for autocorrelation. Do not want to see temporal trend in residuals. Implies that the precision in your estimates changes over time, things closer together than thing farther above. Do not want residuals to change over time like homogeneity of variance vs patterns in time of data which is okay.
+
+Always spike at 1, residual with itself. Do not want to see spikes outside of dashed line. No dependency to correct here.
+
+```{r temp autocorrelation}
+testTemporalAutocorrelation(wq.resid, time = wq.gam5$model$Dt.num)
+```
+
+Both centered and on a log scale.
+
+Wet seasons some pattern happening. 
+Both show similar increase.
+Bottom plot is differnce between dry and wet on average. Wet season has wild fluctations. Dry much more stable, bars are there but small. Also log scale so hard to see.
+
+```{r season partial plots}
+draw(wq.gam5)
+```
+
+SeasonWet like regular test - difference between wet and dry. Intercept is Dry. NOx values are lower in Wet season, but not sigificantly different because of precision.
+
+Both p-values < 0.05. Both are wiggly to a smiliar degree.
+
+```{r season gam summary}
+wq.gam5 %>% summary()
+```
+
+## Detrended by month
+
+Isolate long term trend from short term seasonal trend.
+
+Been around for a long time, but must have regular and complete time series. No missing data across regular increments. But can with a GAM! Split long term trend vs short-term cycle.
+
+'cc' - cyclical cubic regression. Special in that the tails must join in value and derivatives.
+
+AIMS don't cycle in Dec or Jan (weather and Xmas) which is not ideal. Must specify cycle limits and 
+
+```{r detrend GAM}
+wq.gam6 <- gam(NOx ~ s(Dt.num) + s(Mnth, bs = 'cc', # cyclical cubic regression
+                                   k = 6,  # must match knots below
+                                   fx = FALSE), # don't force to be k = 5, do what is normal to penalize, should be default
+               knots = list(Mnth=seq(1, 12, length = 6)), # give limits of time period and number of knots
+               data = wq.pandora,
+               family = Gamma(link = 'log'), method = 'REML'
+               )
+```
+
+No evidence of overconstrained. p-values not significant and k' and edf diferent enough.
+
+```{r detrend k.check}
+k.check(wq.gam6)
+```
+
+Still noise in obs v fitted but getting closer.
+
+```{r detrend appraise}
+appraise(wq.gam6)
+```
+
+Lower quantile is a bit sensitive. When all lines are wiggly should be concerned. All data is not great.
+
+```{r detrend DHARMa}
+wq.reisd <- simulateResiduals(wq.gam6, plot = TRUE)
+```
+
+Annual and seasonal trend. s(Mnth) lines would meet up at Dec/Jan if we predicted for whole year. Ave monthly trend across all years - centered though.
+
+```{r detrend draw}
+draw(wq.gam6)
+```
+
+Both trends significantly different from flat line.
+
+Deviance explained has increased to 67%.
+
+```{r detrend summary}
+wq.gam6 %>% summary()
+```
 
 # Mixed model (all reefs) {.tabset .tabset-faded}
 
+## Subset data
 
-# Model investigation / hypothesis testing {.tabset .tabset-faded}
+Restrict to reefs with good temporal coverage. Exclude the recently added sites. Hard to get accurate intercept for a reef with lots of missing data. Could exclude or flip the x axis (subtract the max value). For splines, better to break up into long-term and shorter term model.
+
+Subset reefs with long-term data.
+
+```{r subset long-term reefs}
+wq.sub <- wq %>% 
+  group_by(reef.alias) %>% 
+  mutate(Min = min(Dt.num)) %>% 
+  ungroup() %>% 
+  filter(Min < 2012) %>% 
+  droplevels()
+```
+
+```{r plot subset}
+ggplot(wq.sub, aes(y = NOx, x = Dt.num)) +
+  geom_point() +
+  facet_wrap(~ reef.alias, scales = 'free_y')
+```
+
+## Fit simple mixed model
+
+Sampling design.
+
+Could go to 10 random spots every year or return to particular spots.
+
+Same spots would give less variability as there is more power in identifying temporal trends. But, trends we come up with would be biased toward sampling sites. Introduces problem of dependency which we cannot ignore - random effects.
+
+Can use gam4 - okay.
+
+Taking newish approach. Use a smoother for random effects - its own basis function.
+
+Random intercepts. Random slopes do not make as much slopes because it's not slopes anymore it's a trend.
+
+Starting with a simple model.
+
+```{r mixed model with smoother}
+wq.gamm3 <- gam(NOx ~ s(Dt.num) + # using the default thin plate spline
+                  s(reef.alias, bs = 're'), # random effect smoother
+                data= wq.sub, family = Gamma(link = 'log'), method = 'REML')
+```
+
+Does not make sense to random effects here - NA. Cannot be overconstrained so ignore.
+
+Some hint we have overconstrained. p-value < 0.05 then k-index will be < 1. k' and edf are close-ish.
+
+Think about increasing number of knots.
+
+```{r mixed k.check}
+k.check(wq.gamm3)
+```
+
+```{r mixed model with smooth}
+wq.gamm3a <- gam(NOx ~ s(Dt.num, k = 20) + # using the default thin plate spline
+                  s(reef.alias, bs = 're'), # random effect smoother
+                data= wq.sub, 
+                family = Gamma(link = 'log'), method = 'REML')
+```
+
+Still have significant p-value but k' and edf not as close. Better even though p-value is significant.
+
+Substantially more wiggly than previous model. Previous edf was ~8 now is ~14.
+
+```{r mixed more k k.check}
+k.check(wq.gamm3a)
+```
 
 
-# Further analyses
+Q-Q plot is okay. 
+Residuals alright. Line is limit of detection values.
+Histogram is good.
+Obs v fitted is ok... lots of noise.
 
+> Accounting for wind, tides improves the noise. Don't have that data here.
+
+```{r mixed appraise}
+appraise(wq.gamm3a)
+```
+
+QQ here is simulation of QQ values. Invariant to what the distribution is unlike previous QQ plot.
+Suggestion of dispersion problem.
+
+```{r mixed DHARMa}
+wq.resid <- simulateResiduals(wq.gamm3, plot = TRUE)
+```
+
+Left: trend over time, centered, log-scale.
+Right: QQ plot for random effects.
+
+```{r mixed model partial plots}
+draw(wq.gamm3a)
+```
+
+Significantly wiggly and the reefs differ (we need to account for it).
+
+```{r mixed gam summary}
+wq.gamm3a %>% summary()
+```
+
+## Mixed GAM with month detrended
+
+```{r mixed model detrended}
+wq.gamm3b <- gam(NOx ~ s(Dt.num, k = 20) + # using the default thin plate spline
+                   s(Mnth, bs = 'cc', k = 5) + # adding same detrend as before
+                  s(reef.alias, bs = 're'), # random effect smoother 
+                 knots = list(Mnth = seq(1, 12, length = 5)),
+                data= wq.sub, family = Gamma(link = 'log'), method = 'REML')
+```
+
+More knots for Mnth
+
+```{r mixed detrended GAM k.check}
+k.check(wq.gamm3b)
+```
+
+Must update Mnth knots and length.
+
+```{r mixed model detrended up Mnth knots}
+wq.gamm3b <- gam(NOx ~ s(Dt.num, k = 20) + # using the default thin plate spline
+                   s(Mnth, bs = 'cc', k = 10) + # adding same detrend as before
+                  s(reef.alias, bs = 're'), # random effect smoother 
+                 knots = list(Mnth = seq(1, 12, length = 10)),
+                data= wq.sub, family = Gamma(link = 'log'), method = 'REML')
+```
+
+```{r mixed detrended GAM k.check 2}
+k.check(wq.gamm3b)
+```
+
+Looks okay.
+
+```{r appriase mixed GAM}
+appraise(wq.gamm3b)
+```
+
+KS test significant, but QQ line not massively deviating. Could fit a different distribution.
+Right is better but still significant. Could take the time to improve and could be okay if exhausted other options and are not better.
+
+```{r mixed GAM DHARMa}
+wq.resid <- simulateResiduals(wq.gamm3b, plot = TRUE)
+```
+
+## Add Region to the Mixed GAM 
+
+```{r mixed GAM with Region interaction}
+wq.gamm3c <- gam(NOx ~ s(Dt.num, by = Region, k = 20) +
+                   s(Mnth, bs = 'cc', by = Region, k = 10) +
+                   s(reef.alias, bs = 're'),
+                 knots = list(Mnth = seq(1, 12, length = 10)),
+                 family = Gamma(link = 'log'),
+                 data = wq.sub, method = 'REML')
+```
+
+```{r mixed GAM Region k.check}
+k.check(wq.gamm3c)
+```
+
+```{r mixed GAM Region appraise}
+appraise(wq.gamm3c)
+```
+
+```{r mixed GAM Region DHARMa}
+wq.resids <- simulateResiduals(wq.gamm3c, plot = TRUE)
+```
+
+Plot residuals with other variables, wind speed, etc. to see if it is useful for the model.
+
+Partial plots with long-term trend and seasonal (Mnth) effects per Region.
+Random effect not useful.
+
+```{r mixed GAM Region draw partials}
+draw(wq.gamm3c)
+```
+
+Main point of GAMs is not to determine if there is a relationghip but to describe the relationship.
+
+```{r mixed GAM Region summary}
+wq.gamm3c %>% summary()
+```
+
+Long-term trends - seem to be a decline between 2014 and 2016. Might like to describe more in a pairwise way. Can use emmeans.
+
+Compare 2014 and 2016. 
+
+Fold scale - 166% higher in 2016.
+
+```{r pairwise test}
+wq.gamm3c %>% 
+  emmeans(~ Dt.num, at = list(Dt.num = c(2014, 2016)), type = 'response') %>% 
+  pairs() %>% 
+  summary(infer = TRUE)
+```
+Increase 1.27 untis of NOx from 2014 to 2016. Across all data.
+
+```{r emmeans on absolute scale}
+wq.gamm3c %>% 
+  emmeans(~ Dt.num, at = list(Dt.num = c(2014, 2016)), type = 'link') %>% 
+  regrid() %>% # outputs in absolute scale
+  pairs() %>% 
+  summary(infer = TRUE)
+```
+
+Burdekin - no (inferential) evidence NOx has declined from 2014 to 2016.
+Mackay Whitsunday and Wet Tropics - yes there is evidence.
+
+```{r emmeans on absolute scale per Region}
+wq.gamm3c %>% 
+  emmeans(~ Dt.num|Region, at = list(Dt.num = c(2014, 2016)), type = 'link') %>% 
+  regrid() %>% # outputs in absolute scale
+  pairs() %>% 
+  summary(infer = TRUE) # gives p-values and CI
+```
+
+Can provide some further numbers to support statements 'NOx increases between 2014-2016' etc. or point of maximum or rate of greatest change with derivatives.
 
 # Summary figures
 
+```{r new data}
+wq.list <- with(wq, list(Dt.num = modelr::seq_range(Dt.num, n = 100),
+                         Region = levels(Region)))
+head(wq.list)
 
+newdata <- wq.gamm3c %>% 
+  emmeans(~Dt.num|Region, at = wq.list,
+          type= 'response') %>% 
+  as.data.frame()
+head(newdata)
+```
+
+```{r summary plot}
+ggplot(newdata, aes(y = response, x = date_decimal(Dt.num), 
+       color = Region, fill = Region)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL), color = NA, alpha = 0.3) +
+  scale_x_datetime('') + # make sure data types match
+  theme_classic()
+```
+
+Adding raw data points on this plot would not be taking into account from different reefs etc.
+
+This plot did not take into account Mnth, but we know there was not a huge effect. 
+
+Use partial points. Partial observations (used to be residuals), standarized observations.
+
+Create a dataset.
+
+`wq.gamm3c$model` captures the data actually used. NAs taken out of the analysis. Always safer to ask for the data the model kept vs the data you provided to model. Give me Dt.num and Mnth = 6 to tell it what month to produce it for. 
+
+Ignore reef.alias - average over reef.
+
+```{r add partial points to summary figure}
+wq.pres <- with(wq.gamm3c$model, 
+                data.frame(Dt.num = Dt.num, Mnth = 6, Region = Region)) %>% 
+  mutate(Pred = predict(wq.gamm3c, exclude = 's(reef.alias)', type = 'link'), # ignore reef.alias in prediction
+         Resid = wq.gamm3c$resid,
+         Partial.obs = exp(Pred + Resid)) # transform back to absolute scale
+wq.pres
+```
+
+```{r summary plot with partial points}
+ggplot(newdata, aes(y = response, x = date_decimal(Dt.num), 
+       color = Region, fill = Region)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL), color = NA, alpha = 0.3) +
+  scale_x_datetime('') + # make sure data types match
+  theme_classic() +
+  geom_point(data = wq.pres, aes(y = Partial.obs))
+```
+
+```{r summary plot with partial points faceted}
+ggplot(newdata, aes(y = response, x = date_decimal(Dt.num), 
+       color = Region, fill = Region)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL), color = NA, alpha = 0.3) +
+  scale_x_datetime('') + # make sure data types match
+  theme_classic() +
+  geom_point(data = wq.pres, aes(y = Partial.obs)) +
+  facet_grid(Region~.) +
+  scale_shape(guide = 'none') # not working
+```
+# Statistical Methods
+
+- Temporal patterns in NOx were explored using Generalized Additive Mixed Models (GAMMs; Wood 2011... REF) 
+- Specifically, the model included a thin-plate smoother for Years, a cyclical cubic regression smoother for Month within Years and a random effect smoother for Sites all modelled agains a Gamma (log link) family.
+- Both long-term (Year) and seasonal (Month) smoothers were fit separately for each Region.
+- Diagnostic checks including DHARMa residuals, concurvity, and tests for over-constrained smoothers were all found to be reasonable. 
+- Additional pairwise contrasts between specific pairs of years within each Region were subsequently used to quantify trends that were apparent in the long-term smoothers.
+- Peaks in NOx were identified using first order derivatives ...
+- GAMMs were fit using the mgcv package (REF) in the R4.0.4 statistical and graphical environment (REF).
+
+Did not do a proper interaction here. Described them but didn't compare differences.
 
 # References
 
