@@ -99,38 +99,207 @@ $$
 
 where $\beta_0$ is the y-intercept, and $f(x)$ indicates an additive smoothing function of $x$. 
 
+Obviously not linear.
+
+```{r data viz}
+ggplot(data_gam, aes(y=y, x=x)) +
+  geom_point() +
+  geom_line()
+```
+
+```{r fit a line}
+ggplot(data_gam, aes(y=y, x=x)) +
+  geom_point() +
+  geom_smooth()
+```
+
+```{r fit a gam}
+ggplot(data_gam, aes(y=y, x=x)) +
+  geom_point() +
+  geom_smooth(method = 'gam', formula = y~s(x,k=3))
+```
 
 # Fit the model
 
+Formula has response on the left ~ s for smoother of x. Telling to fit a smoother which will do the basis function process. Cannot use `s()` outside of gam. 
+
+`method = 'REML'` telling it to use REML for the wiggliness penalty. Opposed to cross validation. Now want to use REML exclusively with GAM.
+
+Get an error about smooth.construct... (eval=FALSE in knit options to keep code but not run and stop the knitting etc.)
+
+Default of GAM is starting smoothers at 12 knots. Only had 5 observations so cannot split up 12 ways. So it has failed.
+
+Knots and degrees of freedom related: k = df + 1. 3 knots, 2 chunks, 2 df. 
+
+```{r fit model, eval = FALSE}
+data_gam.gam <- gam(y~s(x), data = data_gam, method = 'REML')
+```
+
+Can define how many knots to have a maximum. Can still penalize some away to nothing. Defining max knots is a bit of trial and error. 
+
+Default spline is tp (thin plate). Can change basis function using `bs = 'cr'` in the formula. 
+
+```{r define max knots}
+data_gam.gam <- gam(y~s(x, k = 3), data = data_gam, method = 'REML')
+```
 
 # Model validation {.tabset .tabset-faded}
 
+GAMs have some additional assumptions.
+
+Was the number of knots sufficient enough? What if number of knots beyond defined maximum is better?
+
+`gam.check()` checks additional assumptions.
+
+k' - degrees of freedom. Asked for 3 knots so k' is 3 - ` = 2.
+edf - estimated def. What preferred df is.
+k-index - want it to be around 1. Measure of how overestimated? model is. Used to calculate p-vale.
+p-value - evidence if have cut of knots too quick. Here p-value is not significant, so is okay. Does not think there are more complex patterns that are not accounted for.
+
+Here is pretty close to the limit of df. Maybe would have allowed for more wobbliness. What k' and edf to be far apart. If edf is close to k' then know optimum is well below max tested.
+
+1st: essentially q-q normal plot. Want to see a straight line.
+2nd: redisual plot. Want to see no pattern.
+3rd: histogram of residuals. Want a distribution, here gaussian.
+
+With logistic regression (pres/absence, dead/alive), residual plots don't mean much.
+
+4th: predicted/fitted values vs observed. Should expect a straight line. If can't predict the data that was used to build it, not particularly good.
+
+```{r gam check}
+gam.check(data_gam.gam, pch = 19)
+```
+
+Just extract output with `k.check()`.
+
+```{r kcheck}
+k.check(data_gam.gam)
+```
+
+ggplot style validation graphics.
+
+```{r appraise}
+appraise(data_gam.gam)
+```
+
+`k.check()` and `appraise()` together do the same as `gam.check()`.
+
+`check_model()` not working but does not add anything to previous validation. 
+
+```{r check model, eval = FALSE}
+performance::check_model(data_gam.gam)
+```
+
+`quantile = FALSE` for plot because so few data. Missing the horizontal quantile lines in second plot.
+
+```{r DHARMa}
+resids <- DHARMa::simulateResiduals(data_gam.gam, plot = FALSE)
+
+plot(resids, quantile = FALSE)
+```
+
+Concurvity - cannot have two splines that have the same shape for the same dataset. Similar to collinearity for covariates. 
+
+Nonsense here because we only have 1 predictor.
+
+Look for large numbers. Tiny here because there's nothing to do. Look at estimate for each smoother (only 1 here).
+
+```{r concurvity}
+concurvity(data_gam.gam)
+```
 
 # Partial plots
 
+Use package gratia `draw()` function to make partial plots from GAMs.
+
+Partial plots can be either conditional or marginal. Here is conditional. Does not make a difference for 1 predictor.
+
+Marginal gives average across levels.
+
+Curve shown will be centered around zero because it is interested in showing the shape of the trend.
+
+```{r draw gam}
+draw(data_gam.gam)
+```
+
+Used to be called adding partial residuals. Adds data back to plot. 
+
+```{r add data}
+draw(data_gam.gam, residuals = TRUE)
+```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
 
+edf - estimated degree of df/degree of wiggliness. 1 = striaght line. Further from 1 is more wiggly.
+
+Ignore Ref.df. Used to be important.
+
+F ratio and p-value. Testing whether our curve is any different from the intercept (straight flat line). Is the s(x) term significant? Number of reasons why it could be significant. Here not significant.
+
+Also have 2 R^2 values. Want to look at 'Deviance explained' how much is explained by the model. R-sq. (adj) can be okay, would have been used to compare models but do not use for that anymore.
+
+Don't worry about REML stuff on last line so much. Can't use it for anything.
+
+```{r summary}
+data_gam.gam %>% summary()
+```
+
+```{r tidy output}
+tidy(data_gam.gam)
+```
+AIC for comparing models.
+
+```{r AIC}
+AICc(data_gam.gam)
+```
 
 # Further analyses {.tabset .tabset-faded}
 
+What value of x is associated with the peak of the curve?
+
+Can calculate the first order derivative which is the slope.
+
+```{r derivatives}
+derivatives(data_gam.gam, order = 1) %>% # first order
+  draw()
+```
+
+Can store derivaties as an object and summarize to get confidence intervals. 95% CI optimum is between 7.91-9.48. Max is 8.51.
+
+```{r store derivatives}
+d <- derivatives(data_gam.gam, order = 1)
+d
+
+d %>% summarize(Value = data[which.min(abs(derivative))],
+                lower = data[which.min(abs(lower))],
+                upper = data[which.min(abs(upper))])
+```
+
+Can also get greatest rate of curvature/change with 2nd order derivatives. If curve plummets - what point is the max, etc.
 
 # Summary figures
 
+Here create new predicted dataframe and plot using ggplot. GAMs traditionally plot SE not confidence intervate. Here plotted CI which is ~2SE.
 
-```{r SummaryFig, results='markdown', eval=TRUE, hidden=TRUE}
-data_gam.list=with(data_gam, list(x=seq(min(x), max(x), len=100)))
+Similar to above plot but is not centered around 0 which is more useful.
+
+```{r new sequence}
+data_gam.list <- with(data_gam, list(x = modelr::seq_range(x, n = 100)))
 
 newdata = emmeans(data_gam.gam, ~x, at=data_gam.list) %>%
     as.data.frame
 head(newdata)
 
-ggplot(newdata, aes(y=emmean, x=x)) +
-    geom_ribbon(aes(ymin=lower.CL, ymax=upper.CL), fill='blue', alpha=0.3) +
-    geom_line() +
-    geom_point(data=data_gam, aes(y=y,x=x))+
-    theme_bw()
+ggplot(newdata, aes(x = x, y = emmean)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL), alpha = 0.2, fill = 'turquoise') +
+  geom_point(data = data_gam, aes(y=y, x=x)) +
+  theme_classic()
+```
 
+Here adding residuals versus actual data. 
+
+```{r SummaryFig, results='markdown', eval=TRUE, hidden=TRUE}
 ## Partials
 #resid.list = list(x=data_gam$x)
 newdata.partial = data_gam %>%
@@ -149,4 +318,5 @@ ggplot(newdata, aes(y=emmean, x=x)) +
 
 
 ```
+
 # References

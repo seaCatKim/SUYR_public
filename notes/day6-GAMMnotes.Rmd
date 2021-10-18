@@ -1,0 +1,70 @@
+---
+title: "day6-GAMM_notes"
+author: "Catherine Kim"
+date: "18/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Generalized Additive Models
+
+1. Sine wave
+2. Sine wave with linear trend overlayed.
+
+Linear models not good, polynomial work for #1 but no for #2.
+
+Can do **piecewise regression** by nominating a breakpoint(s), two separate models. BUT can have abrupt change in trajectory and uncertainty. Some values of x may have more than one value. 
+
+**Spline** is a forcing different polynomicals to have the same first and second order derivative. E.g., cubic regression spline
+
+- splines defined by *basis* function
+- adding intercept constant to $\beta_1 X_1$ for trendline
+- can do for multiple components of x
+
+Knots - 2 = one at start and end. 3 knots also has one in the middle. Turns it into a piecewise function that 'meet' and has the same uncertainty. 
+
+Need some way of knowing if the trendline is overfit. This is what a GAM does.
+
+Balance between explaining (min RSS) and reduce bias (prediction error).
+How well is it explaining? How well is it predicting other values it hasn't seen before.
+
+Cross validation - 50 obs, fit model with 45, and last 5 use to check the model for prediction. Used to use for determining number of knots. Not any more. 
+
+Now term in the model for **wiggliness**. Penalized for complexity. REML determines the value of the penalty and how many knots.
+
+Tries to produce a balanced trendline between under and over fitting.
+
+Lots of different splines/basis functions to use. 
+tp - thin plate spline is default. Good for very large datasets, fits a subset.
+ps - penalized B-spline. Splits up where data are distributed.
+cr - cubic assumes equally distributed data.
+
+Splines also specifically for random effect, spatial trends, temporal trends etc.
+
+Additive way fits terms in additive way - cannot have interactions. Can put interactions in.
+
+Packages:
+mgcv
+broom
+gratia - takes results and plots in a nice ggplot way. Does not do calculations.
+DHARMa
+performance
+
+
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
