@@ -713,7 +713,7 @@ ggplot(newdata, aes(y = response, x = date_decimal(Dt.num),
   theme_classic() +
   geom_point(data = wq.pres, aes(y = Partial.obs)) +
   facet_grid(Region~.) +
-  scale_shape(guide = 'none') # not working
+  theme(legend.position = 'none') # not working
 ```
 # Statistical Methods
 
