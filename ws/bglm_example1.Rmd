@@ -52,7 +52,9 @@ Load the necessary libraries
 ```{r libraries, results='markdown', eval=TRUE}
 library(rstanarm)   #for fitting models in STAN
 library(brms)       #for fitting models in STAN
-library(standist)   #for exploring distributions
+# install.packages("devtools")
+# devtools::install_github("jmgirard/standist")
+library(standist)   #for exploring distributions for sensible priors
 library(coda)       #for diagnostics
 library(bayesplot)  #for diagnostics
 library(ggmcmc)     #for MCMC diagnostics
@@ -101,6 +103,36 @@ glimpse(fert)
 
 # Exploratory data analysis
 
+Frequentist: 
+
+Intercept - 51.93         163.5
+B1 - 0.811                intercept for centered, slope the same
+R2 - 0.912
+
+```{r lm}
+f <- lm(YIELD ~ FERTILIZER, data = fert)
+
+summary(f)
+
+cf <- lm(YIELD ~ scale(FERTILIZER, scale = FALSE), data = fert)
+summary(cf)
+```
+
+$$
+Y_i \sim N(\mu,\sigma^2)\\
+\mu_i = \beta_0 + \beta_1X
+$$
+
+Need priors for $\sigma^2, \beta_0 + \beta_1$. Want them to be *weakly informative*.
+
+Priors for betas are normally distributed. Use mean fertilizer and specify how 'wide' $\sigma^2$.
+
+Specifying $\sigma^2$ can be tricky.
+
+SD must be above 0.
+
+use a half t (flatter than normal)
+couchy - t distribution with 1 df, even flatter
 
 Model formula:
 $$
@@ -117,12 +149,271 @@ OR\\
 \end{align}
 $$
 
+```{r plot}
+ggplot(fert, aes(y = YIELD, x = FERTILIZER)) + 
+  geom_point() +
+  geom_smooth() +
+  theme_classic()
+```
+
 # Fit the model {.tabset .tabset-faded}
 
+$$
+\beta_0 \sim N(163, 100)\\
+\beta_1 \sim N(0, 100)\\
+
+\sigma^2 \sim \Gamma(2,1)\\
+$$
+
+## Default priors
+
+Bayesian: 
+
+If don't specify priors will give default priors. Defaults are reasonable but need to pay attention especially with complex models. Rerun models with defaults because default settings change through time.
+
+- Model formula wrapped in `bf()` bayesian formula function. 
+- Gaussian by default if not specified.
+- Iterations per chain.
+- Of iterations, remove 1000 for warmup.
+- 3 chains, repeat 3x.
+- Thin every 5 for autocorrelation.
+- Refresh 0  for here, own code leave it out to show progress bar.
+
+Using default priors:
+
+```{r fert bayesian}
+fert.brm <- brm(bf(YIELD ~ FERTILIZER),
+                data = fert,
+                iter = 5000,
+                warmup = 1000,
+                chains = 3, # could add cores to run at same time
+                thin = 5,
+                refresh = 0) 
+```
+
+Names of model outputs.
+
+fit - output dumped from stan, the good stuff.
+
+```{r model names}
+fert.brm %>% names()
+```
+
+What are the default priors?
+
+Estimate 3 things, need priors for those things.
+
+Can vectorize priors for multiple $\beta$ and set priors for specific $\beta$ as well.
+
+Fixed -> population effects
+Random -> varying/group effects
+
+Flat prior or improper prior is a flat from -Inf to Inf. brms uses flat priors for population effects. Dangerous in that it can let you sample in some improper places.
+
+```{r prior summary}
+prior_summary(fert.brm)
+```
+
+student_t(3, 161.5, 90.4) Intercept 
+
+Using a t distribution which is based on df - 3. Paul Berkner has decided.
+Using median value and median absolute deviation (MAD).
+
+Fairly justifiable priors, based on the data. Flat priors less so.
+
+```{r intercept priors}
+median(fert$YIELD)
+mad(fert$YIELD)
+```
+
+Prior for the SD.
+
+student_t(3, 0, 90.4)     sigma
+
+Mean of 0 with a long tail, same as  intercept.
+
+Weakly informative priors.
+
+## Model with setting priors
+
+### Visualize distributions
+
+Good to visualize distributions.
+
+Intercept was 163.5 (mean-centered). 0 - 163.5 is pretty vague. Is to *too* wide allowing for stupidity? This one not too bad. could be a little smaller to 50 - wide enough to allow wide range of intercepts without crazy nonsensical intercepts.
+
+```{r intercept viz}
+standist::visualize('student_t(3,161.5,90.4)', xlim = c(-10,500))
+standist::visualize('student_t(3,161.5,50)', xlim = c(-10,500))
+```
+
+How varied are the values in the population? What is the range - could be 0 up to 200. Saying we don't know. Huge range. Prior of up to a million would not make any sense.
+
+```{r sigma viz}
+standist::visualize('student_t(3,0,90.4)', xlim = c(-10,500))
+```
+
+### Set priors
+
+Just overide flat priors and leave others.
+
+```{r normal prior}
+standist::visualize('normal(0, 19)', xlim = c(-50,50))
+```
+
+`class = b` is all of the $\beta$. Keeping the defaults for Intercept and sigmas. Slopes always have a mean of 0 - could be positive or negative. 
+
+Normal prior based on data exploration.
+
+`sample_prior = 'only'` only sample from priors (not likelihood) to get an idea of priors are reasonable. Data does not have any influence.
+
+```{r set beta prior}
+fert.brm1 <- brm(bf(YIELD ~ FERTILIZER),
+                data = fert,
+                prior = prior(normal(0, 10), class = 'b'),
+                sample_prior = 'only',
+                iter = 5000,
+                warmup = 1000,
+                chains = 3, # could add cores to run at same time
+                thin = 5) 
+```
+
+Predict using just prior model to check if reasonable.
+
+Will get a mean of YIELD mean and uncertainty. Tightening the prior will tighten this figure. Not a logical outcome of 2000 yield. Suggest refining - here will not matter so much because it is a simple model but a good practice.
+
+Balance between wide enough to being unreasonable - too wide or narrow. Too wide could cause problems for sampler.
+
+ggemmeans - specify the effect interested in.
+
+```{r ggemmeans}
+fert.brm1 %>% ggemmeans(~ FERTILIZER) %>% plot(add.data = TRUE)
+``` 
+
+Also inbuilt function in brms - gives all effects.
+
+```{r}
+fert.brm1 %>% conditional_effects() %>% plot(points = TRUE)
+```
+
+### Refining priors
+
+Setting intercept prior to 164 with SD of 10. Looks good.
+
+```{r intercept refine}
+standist::visualize('normal(164, 10)', xlim = c(-100,300))
+```
+
+Slopes, always centered around 0.
+
+What about variance? Would need to consider what sort of slopes we would expect.
+
+Although this looks narrow, consider that slope of 2 is doubling and -2 is halfing so a big effect.
+
+```{r slope refine}
+standist::visualize('normal(0, 1)', xlim = c(-10,10))
+```
+
+Sigma
+
+Gamma because don't really expect SD to be 0 but can be close to 0.
+
+```{r sigma refine}
+standist::visualize('gamma(2, 1)', xlim = c(0, 10))
+```
+
+```{r set new priors}
+priors <- prior(normal(164, 10), class = 'Intercept') +
+  prior(normal(0, 1), class = 'b') +
+  prior(gamma(2, 1), class = 'sigma')
+```
+
+```{r model with new priors}
+fert.brm2 <- brm(bf(YIELD ~ FERTILIZER),
+                data = fert,
+                prior = priors,
+                sample_prior = 'only',
+                iter = 5000,
+                warmup = 1000,
+                chains = 3, # could add cores to run at same time
+                thin = 5) 
+```
+
+Plot prior only effect. Range of effect looks reasonable.
+
+Weakly informative, not going to influence the paramenters but not cause problems for sampler.
+
+```{r new prior effects}
+fert.brm2 %>% 
+  ggemmeans(~FERTILIZER) %>% 
+  plot(add.data = TRUE)
+```
+
+## Model with priors and data
+
+Fitting the propoer model with new priors and the data.
+
+```{r model with priors and data}
+fert.brm3 <- update(fert.brm2, sample_prior = 'yes') # sample from both prior and postieror
+```
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+## Prior check 
 
+Start with getting an idea of whether priors were likely to be too informative - are they influencing the posterior?
+
+Prior plot should be wider than the posterior plot. 
+
+There is no inbuilt function.
+
+Interested in intercept 'b_FERTILIZER' (posterior) which is slope and 'sigma' (posterior) which is SD.
+
+'prior_b' prior on betas we set. 'prior_sigma'
+
+Want to plot prior for b_FERTILIZER with prior_b and same for sigma. prior_sigma v sigma.
+
+```{r model vars}
+fert.brm3 %>% get_variables() # what things we have sampled (not observations from data - MCMC samples/draws, values from the chain) from
+```
+
+Bayesian models take much longer to run. Huge computational advantages to having the data centered. 
+
+We did not center the data but brms does it automatically.
+
+prior_intercept was on centered data, but did not explicitly centered. So b_intercept is not centered in the output thus b_intercept and prior_intercept not on same scale and can't compare. **Ignore intercept plot**
+
+beta plot - looks good, prior not too influential.
+sigma plot - no overlap, prior can't possibly be driving. Also good. Could make prior a bit wider, maybe converge faster.
+
+Reasonably comfortable that the priors are not influential.
+
+```{r plot}
+fert.brm3 %>%
+  posterior_samples %>%
+  select(-`lp__`) %>% 
+  pivot_longer(cols=everything(), names_to='key', values_to='value') %>% 
+  mutate(Type=ifelse(str_detect(key, 'prior'), 'Prior', 'b'),
+         Class=ifelse(str_detect(key, 'Intercept'),  'Intercept',
+               ifelse(str_detect(key, 'sigma'),  'Sigma',  'b'))) %>%
+  ggplot(aes(x=Type,  y=value)) +
+  stat_pointinterval()+
+  facet_wrap(~Class,  scales='free')
+```
+
+If want to learn stan language:
+
+Could create this list.
+
+```{r stan model}
+fert.brm3 %>% standata()
+```
+
+See the stan code:
+
+```{r stan code}
+fert.brm3 %>% stancode()
+```
 
 **MCMC sampling behaviour**
 
@@ -149,8 +440,100 @@ $$
 |           | Scale reduction   | `ggs_grb`              | `ggs_grb(ggs(mod))`              | `ggs_grb(ggs(mod))`                |
 |           |                   |                        |                                  |                                    |
 
+```{r available plots}
+available_mcmc() # set type to trace for below
+```
+
+## MCMC bayes plot
+###Trace plot
+
+Trace plots for our main parameters.
+
+Look good - total noise.
+
+1. Want just noise.
+2. Chains are equally noisy and overlap. Want well mixed.
+
+```{r mcmc trace plot}
+fert.brm3 %>% mcmc_plot(type = 'trace')
+```
+
+### Autocorrelation
+
+Spike at beginning is normal. Then want it below 0.2. Looks good. Have thinned to 5 but may need to thin more.
+
+```{r mcmc autocorrelation}
+fert.brm3 %>% mcmc_plot(type = 'acf_bar')
+```
+
+### R hat
+
+Numerical measure of convergence for chains.
+
+Want all R hat to be less than 1.05 - cut off for convergence. Evidence chains have converged.
+
+Good here.
+
+```{r}
+fert.brm3 %>% mcmc_plot(type = 'rhat_hist')
+```
+
+### Effective samples
+
+Number of effective samples. Sampler can go back to previous sample if rejected. Want values that are close to 1. Like a proportion of effective samples. Above 1 is possible, but means it is fine.
+
+Values < 0.5 means sampler has wandered off and got stuck. Priors too weak, reassess.
+
+Will also take a lot longer to run can consider it as a ameasure of efficiency.
+
+```{r neff}
+fert.brm3 %>% mcmc_plot(type = 'neff_hist')
+```
+
+## Stan plots
+
+### Trace plot
+
+Colors a bit better and not Times New Roman.
+
+```{r stan trace}
+fert.brm3$fit %>% stan_trace()
+```
+
+Can include warm-up. Can adjust if worse in the start.
+
+```{r stan trace w warmup}
+fert.brm3$fit %>% stan_trace(inc_warmup = TRUE)
+```
+
+### Autocorrelation
+
+Looks perfect.
+
+```{r stan autocorrelation}
+fert.brm3$fit %>% stan_ac()
+```
+
+Looks much worse with warm-up. Illustration of bad autocorrelation. 
+
+```{r stan autocorrelation w warmup}
+fert.brm3$fit %>% stan_ac(inc_warmup = TRUE)
+```
+
+### R hat
+
+```{r stan rhat}
+fert.brm3$fit %>% stan_rhat()
+```
+
+```{r stan effective}
+fert.brm3$fit %>% stan_ess()
+```
+
 
 # Model validation {.tabset .tabset-faded}
+
+Did on posterior check whcn comparing with prior. Lots of other posterior checks that are useful.
 
 **Posterior probabilty checks**
 
@@ -165,11 +548,78 @@ $$
 |           | Parial plot       | `ppc_ribbon`                 | `pp_check(mod, x=, plotfun='ribbon')`                 | `pp_check(mod, x=, type='ribbon')`                 |
 |           |                   |                              |                                                       |                                                    |
 
+Not necessarily a Bayesian thing, easier to plot Bayes.
 
+Frequentist - one prediction per point.
+Bayes - 1000s of samples to draw can get thousands of predictions. Can get 1000s of realizations of what the posterior looks like. Do the posterior predictions roughly reflect the data distribution.
 
+If the model is good, it should be able to predict the data quite well.
+
+Posterior/model does reflect the data quite well.
+
+```{r pp_check}
+fert.brm3 %>% pp_check(type = 'dens_overlay', nsamples = 100)
+```
+
+## Shiny stan
+
+Shiny server for these plots.
+
+```{r shinystan}
+library(shinystan)
+launch_shinystan(fert.brm3)
+```
+
+## DHARMa residuals
+
+With Bayesian models need to create residuals ourselves.
+
+When predicting, predicting response at a given x. Get a single value. For Bayesian, get the number of predictions per sample.
+
+5000 samples - 1000 burnin
+x 3 chains = 12000 / 5 thinning = 2,400
+
+Here get 250 predictions for each x.
+
+Everything looks good. 
+
+```{r DHARMa}
+fert %>% head()
+
+preds <- fert.brm3 %>% posterior_predict(nsmaples = 250, summary = FALSE)
+fert.resids <- createDHARMa(simulatedResponse = t(preds), # transpose matrix
+                            observedResponse = fert$YIELD, # only thing that will change
+                            fittedPredictedResponse = apply(preds, 2, median), # calc median for each column
+                            integerResponse = FALSE)
+
+fert.resids %>% plot()
+```
 
 # Partial effects plots {.tabset .tabset-faded}
 
+Very similar ggemmeans code and plot to frequentist.
+
+```{r partial plot}
+fert.brm3 %>% ggemmeans(~FERTILIZER) %>% plot(add.data= TRUE)
+```
+
+brms conditional effects
+
+```{r conditional effects}
+fert.brm3 %>% conditional_effects() %>%  plot(points = TRUE)
+```
+
+Spaghetti plot:
+
+- do not have just one of anything
+- have lots of everything!
+- rather than CI, can show a whole heap (200, 1000, 2400) of realizations
+- could produce 2,400 best fit lines
+
+```{r conditional effects spaghetti plot }
+fert.brm3 %>% conditional_effects(spaghetti = TRUE, nsamples = 200) %>%
+  plot(points = TRUE)
+```
 
 # Model investigation {.tabset .tabset-faded}
 
@@ -193,17 +643,259 @@ estimate.
 | `median_hdci` | Median and continuous Highest Probability Density Interval |
 |               |                                                            |
 
+Have 2,400 iterations of everything in this table. Calculate statistics from this table.
 
+Intercept of the model would be the mean of all 2,400 intercepts. 
 
+What is the probability that there is a positive effect of fertilizer - the slope is > 0. Count which slopes are > 0 and divide by 2,400 iterations and have the proportion that are > 0.
 
+Could export into a spreadsheet and manipulate.
+
+Other ways to put model fits into a table. Could ask for fitted draws.
+
+```{r model fits}
+fert.brm3$fit %>% as.matrix() %>% head()
+```
+
+```{r median quantile}
+fert.brm3$fit %>% as.matrix() %>% median_qi(b_FERTILIZER)
+```
+
+hpd - highest probability density intervals. Like the difference between quantiles and kernals which take into acount the shape. For intervals.
+
+## Summarize
+
+Estimates are the mean.
+
+Intercept - 52.27, est.error = SD
+upper and lower credibility intervals like CI
+Rhat - measure of convergence between chains
+Bulk_ESS (effective sample sizes) - we had 2400, for intercept 2266 were effective or unique
+Tail_ESS another way.
+
+FERTILIZER - slope - 0.81
+credibility intervals, so on.
+
+Unlike frequentist can make statements like: (people do in frequentist but shouldn't)
+
+We are 95% sure that the effect of fertilizer is between 0.7 and 0.93. 
+
+sigma - SD - 12.75
+
+CI - carries the baggage of how it's calculated
+Credibility intervals not calculated the same so not CIs. Same interpretation to demonstrate size of the effect - not a hypothesis test.
+
+```{r summary stats}
+fert.brm3 %>% summary()
+```
+
+Median more robust than a mean. Not going to be that different because it's a gaussian distribution.
+
+HPD - more representative than quantiles
+
+Good idea for rhat and ess to illustrate had good convergence and sampling was efficient.
+
+```{r tidy stats table}
+fert.brm3$fit %>%  tidyMCMC(estimate.method = 'median',
+                        conf.int = TRUE,
+                        conf.method = 'HPDinterval', # cred interval based on HPD
+                        rhat = TRUE, ess = TRUE)
+```
+
+Want to do anythings else (count slopes > 0) need to do ourselves.
+
+First 3 variables of interest.
+
+`gather_draws()` pivots table to long format and groups by .variable.
+
+```{r gather draws}
+fert.brm3 %>% get_variables() # check names of variables, possible to ask for
+
+fert.brm3 %>% 
+  gather_draws(b_Intercept, b_FERTILIZER, sigma) %>% 
+  median_hdci() # median and cred inteval for each variables
+```
+
+Histogram illustrates the probability distribution. Some people argue this is better than a table.
+
+```{r histogram per parameter}
+fert.brm3 %>% 
+  gather_draws(b_Intercept, b_FERTILIZER, sigma) %>%
+  ggplot() +
+  geom_histogram(aes(x = .value)) +
+  facet_wrap(~ .variable, scales = 'free')
+```
+
+Halfeye plot - if flip looks like an eye...
+
+More useful for ANOVA, partial slopes with lots of categories for comparison. Here does not make a lot of sense.
+
+'.' to ensure that not the same named variable already
+
+```{r halfeye}
+fert.brm3 %>% 
+  gather_draws(b_Intercept, b_FERTILIZER, sigma) %>%
+  ggplot() +
+  stat_halfeye(aes(x = .value, y = .variable)) +
+  facet_wrap(~ .variable, scales = 'free')
+```
+
+Pseudo-R2
+
+Control with `summary = FALSE` and specificy `median_hdci()`.
+
+Pretty much the same as frequentist R2 of 0.912.
+
+```{r R2}
+fert.brm3 %>% bayes_R2(summary = FALSE) %>% median_hdci()
+```
+
+```{r bayes R2}
+fert.brm3 %>% bayes_R2(summary = FALSE) %>% median_hdci()
+```
+
+Probability slope is > 0.
+
+If .value > 0 is TRUE equates to a 1 and gets summed. 2,400/2,400 were > 1.
+
+The probability that there is a positive effect of fertilizer is 100%. Not actually possible to get 0 or 100% but effectively the case.
+
+```{r calc p}
+fert.brm3 %>% gather_draws(b_FERTILIZER) %>% 
+  summarize(P = sum(.value > 0)/n())
+```
+
+Probability slope is > 0.80 - the median. Should be close to 50%.
+
+```{r calc median p}
+fert.brm3 %>% gather_draws(b_FERTILIZER) %>% 
+  summarize(P = sum(.value > 0.8)/n())
+```
+
+Probability that the rate of change is 0.7.
+
+```{r calc slope 0.7}
+fert.brm3 %>% gather_draws(b_FERTILIZER) %>% 
+  summarize(P = sum(.value > 0.97)/n())
+```
+
+Probability the slope is >1.
+
+```{r calc slope > 1}
+fert.brm3 %>% gather_draws(b_FERTILIZER) %>% 
+  summarize(P = sum(.value > 1)/n())
+```
+
+Can test almost any hypothesis.
 
 # Predictions {.tabset .tabset-faded}
 
+If I (farmer) used a FERTILIZER x of 110, what yield will I get?
 
+At 110 fertilizer expect ~141 units yield. 95% sure it will be inbetween 124-149.
+
+Did both prediction and summary to mean and cred interval.
+
+```{r set up grid and predict}
+newdata <- data.frame(FERTILIZER = 110) # could also be a list
+
+fert.brm3 %>% emmeans(~ FERTILIZER, at = newdata)
+```
+
+Don't automatically summary. Now get 2,400 predictions associated with 110 fertilizer.
+
+```{r tidy draws}
+fert.brm3 %>% 
+  emmeans(~FERTILIZER, at = newdata) %>% 
+  tidy_draws()
+```
+
+Probability our yield will exceed 135 units at 110 fertilizer.
+
+95% sure the yield will be > 135 at 110 fertilizer. Stong/large evidence that yield will be > 135 at 110 fertilizer.
+
+These p-values are called **exceedence probabilities**.
+
+```{r tidy draws w p}
+fert.brm3 %>% 
+  emmeans(~FERTILIZER, at = newdata) %>% 
+  tidy_draws() %>% 
+  summarize(P = sum(`FERTILIZER 110` > 135)/n())
+```
 
 # Hypothesis testing {.tabset .tabset-faded}
 
+Hypothesis that the slope of FERTILIZER is > 0. Same as above but also gives us something else.
 
+H - Fert slope is > 0 comparing the evidence for that against the evidence against - Evid.Ratio. This is like the odds ratio. Says x as much evidence for vs agains (if it was 2).
+
+For previous test: 0.953/(1-0.953) = 20.3 x more likely to get yield > 135
+
+Cannot do with frequentist.
+
+```{r H fert is positive}
+fert.brm3 %>% hypothesis('FERTILIZER > 0')
+0.953/(1-0.953)
+```
+
+```{r plot slopes}
+fert.brm3 %>% hypothesis('FERTILIZER > 0') %>% plot(ignore_prior = TRUE)
+```
+
+Another way of ploting priors.
+
+```{r plot slopes w prior}
+fert.brm3 %>% hypothesis('FERTILIZER > 0') %>% plot()
+```
+
+Thinking of changing fertilizer from 100 to 200. What effect would that have? Or other way - decrease fertilizer from 200 to 100.
+
+Predict two states of fertilizer at 200 or 100.
+
+If going from 200 to 100 will see a change in 80.8 units with credibility interval at 69.8-92.
+
+Can also calculate probability of change > 60 units etc.
+
+```{r predict 200 100}
+newdata <- list(FERTILIZER = c(200, 100))
+
+fert.brm3 %>% 
+  emmeans(~ FERTILIZER, at = newdata) %>% 
+  pairs()
+```
+
+What percentage change does 80.8 units represent.
+
+```{r change as tidy table}
+fert.brm3 %>% 
+  emmeans(~ FERTILIZER, at = newdata) %>% 
+  tidy_draws() %>% 
+  as.data.frame() %>% 
+  head()
+```
+
+60% increase in yield going from 100 to 200 fertilizer.
+95% sure the change would be between 49-70% increase.
+```{r change in percent}
+fert.mcmc <- fert.brm3 %>% 
+  emmeans(~ FERTILIZER, at = newdata) %>% 
+  tidy_draws() %>% 
+  rename_with(~str_replace(., 'FERTILIZER ', 'p')) %>%  # cange names
+  mutate(Eff = p200 - p100,
+         PEff = 100 * Eff/p100) 
+fert.mcmc %>% head()
+
+fert.mcmc %>% median_hdci(PEff)
+```
+
+Probability change is more than 50% - exceedence probability.
+
+Strong evidence that the yield will change by over 50% increasing fertilizer from 100 to 200.
+
+```{r exceedence p at 50 percent}
+fert.mcmc %>% 
+  summarize(sum(PEff > 50)/n())
+```
 
 
 # Summary figures {.tabset .tabset-faded}
@@ -257,11 +949,6 @@ ggplot(newdata,  aes(y=.value,  x=FERTILIZER)) +
   geom_point(data=fert,  aes(y=YIELD))
   
 ```
-
-
-
-
-
 
 
 
