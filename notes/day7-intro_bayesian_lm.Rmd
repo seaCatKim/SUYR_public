@@ -1,0 +1,89 @@
+---
+title: "Day 7 Intro Bayesian"
+author: "Catherine Kim"
+date: "19/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction to Bayesian Statistics
+
+### History
+
+Rev Thomas Bayes thinking about the evolution of belief.
+
+Have some knowledge and challenge that with more knowledge.
+
+Prior knowledge x PD (more information) -> Posterior knowledge
+
+Bayes formalized this with equations. Problem of conditional probability.
+
+Probability of hypothesis x P of data given hypothesis -> Probatility of H given D
+    divided by Probability of data
+    
+    P(H) x P(D|H) / P(D) = P(H|D)
+    
+La Place recognized P(D|H) is likelihood and wrote it up as Bayesian theory.
+
+P(D|H) we can calculate - but need to divide by P(D) to turn it into probability distribution instead of likelihood. P(D) is difficult.
+
+For testing hypotheses can model the null hypothesis. Get a slope, calculate t test, is it different from the null H. Pragmatic frequentist approach.
+
+t = effect (B) / precision (SE)
+
+Some issues:
+
+- Based on some collection of data. Probability of your data...
+- Probability of your data or data more extreme that sampled data.
+- Hard to communicate.
+
+Computing can calculate Bayes Theorem with brunt force. P(D) cannot be directly computed. How do we reconstruct/simulate a distribution we don't know what it looks like?
+
+More challenges with Bayesian:
+
+- P(H) is a bit subjective
+- Building a hypothesis with prior knowledge (former experiments) can be good.
+- Can be diffuse - wide range - not much effect or very tight and influential.
+
+## Markov Chain Monte Carlo
+
+Markov Chain Monte Carlo can reconstruct a posterior distribution by sampling estimates. Keep/reject samples based on probability. 
+
+MCMC diagnostics.
+
+**Trace plots**:  want good mixing.
+**Autocorrelation**: as stepping draws are correlated. Things close together in the chain will be more similar. If there is autocorrelation keep every nth draw that is not autocorrelated - thin to level with no autocorrelation. Tied to step length of every draw. Threshold of about 20% correlation.
+
+### Sampler types
+
+Metropolis Hastings - slow.
+Gibbs - works in one dimension at a time. Drastically reduced number of iterations required. Steps small so highly correlated. Need to thin
+NUTS (No U turn sampler) - steps are larger so less autocorrelation, better mixing, faster. Hit a boundary and stop and wait for another 'flick'.
+
+Priors sort of like setting the search domain for draws. If way to diffuse can get stuck outside of data distribution where there is no likelihood and will not go back.
+
+### Sampling
+
+- thinning for autocorrelation
+- burnin (warm-up). Adaptive phase. Experiments with step size and don't want to keep. Can be as much as half of the iterations. Depends on the complexity of the model
+- chains. Repeat it. If each chain gives the same outcome then can combine and it's all good. If all don't converge at the same point than cannot trust. Three or four generally enough to assess.
+
+## Bayesian software for R
+
+- MCMCpack
+- winbugs (R2winbugs)
+- jags (R2jags)
+- stan (rstan, rstanarm, brms)
+    - it's own language
+    - interfaces from R to stan
+    - R useful for data manipulation and visualization
+    
+    - rstan: requires programming in stan. Combination of R in C.
+    - rstanarm: written by stan community as a soft intro to running stan. Mirroring other packages like lme3, glm, glmmer with same syntax. Problem will only run the same models - glmmer doesn't support some families, autocorrelation...
+    - brms: takes same syntax of other packages and converts into stan code and compiles it, runs, and comes back to R. More difficult to set up, need compiles from C code to machine code. Basically anything in stan can do in brms. 
+    -
+
+
