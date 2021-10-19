@@ -56,27 +56,24 @@ library(emmeans)   #for marginal means etc
 library(broom)     #for tidy output
 library(MuMIn)     #for model selection and AICc
 library(lubridate) #for processing dates
-library(mapdata)
-library(maps)
+#library(mapdata) # use naturalearth packages instead
+#library(maps)
 library(tidyverse) #for data wrangling
 library(DHARMa)    #for residual diagnostics
 library(performance)
 library(see)
-library(sf)
-library(stars)
-library(rnaturalearth)
+library(sf) # standard features
+library(stars) # raster data
+library(rnaturalearth) # interfaces, data for spatial objects, high res maps
 library(rnaturalearthdata)
-library(raster)
+library(raster) # more mature than stars
 library(ggspatial)
 library(patchwork)
 ```
  
 # Scenario
 
-@Paruelo-1996-1212 analyzed the geographic distribution and the effects of climate variables on the 
-relative abundance of a number of plant functional types (PFT's) including shrubs, forbs, succulents (e.g. cacti), 
-C3 grasses and C4 grasses. They used data from 73 sites across temperate central North America (see pareulo.csv) 
-and calculated the relative abundance of C3 grasses at each site as a response variable
+@Paruelo-1996-1212 analyzed the geographic distribution and the effects of climate variables on the relative abundance of a number of plant functional types (PFT's) including shrubs, forbs, succulents (e.g. cacti), C3 grasses and C4 grasses. They used data from 73 sites across temperate central North America (see pareulo.csv) and calculated the relative abundance of C3 grasses at each site as a response variable
 
 ![grass](../resources/grass.jpg){width="251" height="290"}
 
@@ -96,10 +93,12 @@ C3    LAT       LONG       MAP           MAT    JJAMAP    DJFMAP
 **DJFMAP**         - Mean annual precipitation in December, January, February
 --------------     ---------------------------------------------------------------------
 
+C3 is percent from quadrats.
+
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
-paruelo = read_csv('../data/paruelo.csv', trim_ws=TRUE)
+paruelo = read_csv('../data/paruelo.csv', trim_ws=TRUE) # trim removing white space in front and behind
 glimpse(paruelo)
 ```
  
@@ -115,9 +114,119 @@ $$
 
 where $\beta_0$ is the y-intercept. $f(Lat)$ and $f(Long)$ indicate the additive smoothing functions of the spatial predictors. 
 
+Which distribution? Constrained 0-1. **Beta** but no 0s or 1s.
+
+Data are from North America - visualize on a map.
+
+```{r get map data}
+usa <- ne_countries(country = c('united states of america', 'canada'), 
+                    scale = 'medium', returnclass = 'sf')
+
+ggplot() +
+  geom_sf(data = usa) # will get the CRS, object type line etc.
+```
+
+Exclude territories to simplify data through cropping. `st_` functions.
+
+```{r crop data}
+usa <- usa %>% 
+  st_crop(xmin = -130, xmax = -60,
+          ymin = 0, ymax = 60)
+
+ggplot() +
+  geom_sf(data = usa)
+```
+
+Scale so not 0s in CAM3 cover.
+
+Longitude multiplied by -1 to be in the right quadrant.
+
+```{r scale cover}
+paruelo <- paruelo %>% 
+  mutate(mC3 = ifelse(C3==0, 0.01, C3),
+         LONG= -1 * LONG)
+```
+
+Could plot lat/longs on map but better to convert points into spatial object with CRS.
+
+```{r converte points to spatial}
+paruelo.sf <- paruelo %>% 
+  st_as_sf(coords = c('LONG', 'LAT'), crs = st_crs(usa)) # UTM or degrees etc.
+st_crs(usa) # CRS info
+```
+
+Make a bubble map - size is proportional to cover.
+
+In the grassland area mostly in USA. Seem to have higher abundance further north. Also perhaps a W to E gradient.
+
+```{r bubble map}
+ggplot() +
+  geom_sf(data = usa) +
+  geom_sf(data = paruelo.sf, aes(color = C3, size = C3)) +
+  scale_color_gradientn(colors = heat.colors(n = 10)) +
+  coord_sf(expand = FALSE)
+```
+
+If you have lat/longs should take your residuals and plot them in space to see if there is a patter - spatial autocorrelation check. If there is a pattern might need to include space in the model.
+
+Don't use the spatial objects in the GAM. Cannot use the paruelo.sf data in a model.
+
+```{r sf}
+paruelo.sf %>% head()
+```
 
 # Fit the model {.tabset .tabset-faded}
 
+We want an entire 2D surface. Have more degrees of freedom with a surface
+
+```{r gam 1}
+paruelo.gam1 <- gam(mC3 ~ s(LONG, LAT), # 2 variables, an antire surface that can vary)
+                    data = paruelo, 
+                    family = betar, # beta distribution
+                    method = 'REML')
+```
+
+Not overconstrained.
+
+```{r gam1 k.check}
+k.check(paruelo.gam1)
+```
+
+Betas look weird on QQs. DHARMa should be better.
+
+```{r gam1 appraise}
+appraise(paruelo.gam1)
+```
+
+Unfortunately beta family and DHARMa do not play nicely together. Need to `createDHARMa()`.
+
+QQ plot is much better here.
+
+```{r gam1 DHARMa}
+paruelo.resids <- createDHARMa(simulatedResponse = simulate(paruelo.gam1, nsim = 250),
+                               observedResponse = paruelo$mC3,
+                               fittedPredictedResponse = predict(paruelo.gam1))
+plot(paruelo.resids)
+```
+
+Lots of gray bits - not confident can predict here because long way away from any data.
+
+Pattern of C3 plants have more cover at higher latitudes. 
+
+Keep in mind on logit scale. In north, C3 grasses have ~88% cover while further south only have ~18%.
+
+Represents surface and wiggliness in the surface. Varies in one direction, a N-S gradient. Can't say anything about the direction (lat/long) of the gradient - can visualize it.
+
+```{r gam1 partial plot}
+draw(paruelo.gam1)
+
+plogis(2)
+plogis(-1.5)
+```
+
+```{r gam1 summary}
+paruelo.gam1 %>% summary()
+```
 
 # Partial plots {.tabset .tabset-faded}
 
@@ -142,6 +251,30 @@ draw(paruelo.gam1)
 
 ## te(LONG,LAT) {.tabset .tabset-pills}
 
+If variables do not vary on the same scale, use te on a surface. A tensor.
+
+```{r te gam}
+paruelo.gam2 <- gam(mC3 ~ te(LONG, LAT), 
+                    data = paruelo, family = betar, method = 'REML')
+```
+
+Not overconstrained although p-value < 0.05. k' is much bigger than edf. Adding more knots is not going to help.
+
+```{r te k.check}
+k.check(paruelo.gam2)
+```
+
+```{r te appraise}
+appraise(paruelo.gam2)
+```
+
+```{r te DHARMa}
+paruelo.resids <- createDHARMa(simulatedResponse = simulate(paruelo.gam2, nsim = 250),
+                               observedResponse = paruelo$mC3,
+                               fittedPredictedResponse = predict(paruelo.gam2))
+plot(paruelo.resids)
+```
+
 ### plot
 ```{r partialPlots2a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
 plot(paruelo.gam2,scheme = 2)
@@ -158,8 +291,42 @@ vis.gam(paruelo.gam2, theta=30)
 draw(paruelo.gam2)
 ```
 
+Allowed different degree of smoothing in each direction. Still can't distinguish variability in either direction.
+
+
+```{r te gam summary}
+paruelo.gam2 %>% summary()
+```
+
 ## ti(LONG,LAT) {.tabset .tabset-pills}
 
+Could included an unrelated variable using `s()`. 
+
+Now we will get 3 partial plots: LONG, LAT, and LONG x LAT. 
+
+Interaction term is the trend that would differ from if it was additive. How much does it differ from just overlaying two plots.
+
+```{r gam with interaction}
+paruelo.gam3 <- gam(mC3 ~ ti(LONG) + ti(LAT) + ti(LONG, LAT), # 
+                    data = paruelo, family = betar, method = 'REML')
+```
+
+### validation
+
+```{r ti k.check}
+k.check(paruelo.gam3)
+```
+
+```{r ti appraise}
+appraise(paruelo.gam3)
+```
+
+```{r ti DHARMa}
+paruelo.resids <- createDHARMa(simulatedResponse = simulate(paruelo.gam3, nsim = 250),
+                               observedResponse = paruelo$mC3,
+                               fittedPredictedResponse = predict(paruelo.gam3))
+plot(paruelo.resids)
+```
 ### plot
 ```{r partialPlots3a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=4, fig.height=4}
 plot(paruelo.gam3,scheme = 2)
@@ -172,8 +339,20 @@ vis.gam(paruelo.gam3, theta=30)
 
 ### draw
 
+Interaction plot: top right corner there is slightly fewer than would expect based on lat or long pattern. Slightly more in top left, bottom right from additive effect.
+
+**NOT** the spatial pattern.
+
 ```{r partialPlots3c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=8, fig.height=8}
 draw(paruelo.gam3)
+```
+
+No evidence of a LONG effect. 
+Evidence it does vary with LAT. Not very wiggly though, edf = 1.
+ti(LONG, LAT) - is wiggly, not completely additive.
+
+```{r ti gam summary}
+paruelo.gam3 %>% summary()
 ```
 
 # Model investigation / hypothesis testing {.tabset .tabset-faded}
@@ -253,13 +432,18 @@ tidy(paruelo.gam3)
 
 ## s(LONG,LAT) {.tabset .tabset-pills}
 
+Need to map out across the whole surface in 2D.
+
+Predicting C3 abundance in percentage units across the rectangle.
+
 ```{r summaryFig1a, results='markdown', eval=TRUE, hidden=TRUE, fig.width=5, fig.height=5}
 paruelo.list = with(paruelo,
-                    list(LAT=seq(min(LAT), max(LAT), len=100),
-                         LONG=seq(min(LONG), max(LONG), len=100)))
+                    list(LAT = modelr::seq_range(min(LAT), max(LAT), len=100),
+                         LONG = modelr::seq_range(min(LONG), max(LONG), len=100)))
 newdata = emmeans(paruelo.gam1, ~LONG+LAT, at=paruelo.list, type='response') %>%
   as.data.frame
 newdata %>% head
+
 ggplot(newdata, aes(y=LAT, x=LONG)) +
   geom_tile(aes(fill=response)) +
   geom_contour(aes(z=response)) +
@@ -267,6 +451,8 @@ ggplot(newdata, aes(y=LAT, x=LONG)) +
   geom_point(data=paruelo,aes(fill=C3), shape=21, size=5) +
   coord_equal()
 ```
+
+Need to convert to raster to overlay on our map. Raster is stored as a matrix and the range of the values and assumes there is a full set in that matrix.
 
 ```{r summaryFig1b, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
 newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>% 
@@ -281,11 +467,19 @@ ggplot() +
   geom_stars(data=newdata.sf)
 ```
 
+Mask predicted raster by land.
+
 ```{r summaryFig1c, results='markdown', eval=TRUE, hidden=TRUE, fig.width=7, fig.height=5}
 newdata.sf <- rasterFromXYZ(newdata[, c("LONG", "LAT", "response")]) %>%
-  mask(usa) %>%
+  mask(usa) %>% # mask out usa region
   st_as_stars() %>% 
   st_set_crs(st_crs(usa))
+
+mask(newdata.sf, usa)
+
+plot(newdata.sf)
+class(usa)
+class(newdata.sf)
 
 ggplot() +
   geom_sf(data=usa) +
@@ -299,7 +493,21 @@ ggplot() +
   coord_sf(expand=FALSE) +
   theme_bw()
 
+
 ```
+
+```{r mask example}
+r <- raster(ncol=10, nrow=10)
+m <- raster(ncol=10, nrow=10)
+values(r) <- runif(ncell(r)) * 10
+values(m) <- runif(ncell(r))
+m[m < 0.5] <- NA
+mr <- mask(r, m)
+
+m2 <- m > .7
+mr2 <- mask(r, m2, maskvalue=TRUE)
+```
+
 
 ## te(LONG,LAT) {.tabset .tabset-pills}
 
