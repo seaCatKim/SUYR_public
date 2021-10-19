@@ -18,7 +18,7 @@ Linear models not good, polynomial work for #1 but no for #2.
 
 Can do **piecewise regression** by nominating a breakpoint(s), two separate models. BUT can have abrupt change in trajectory and uncertainty. Some values of x may have more than one value. 
 
-**Spline** is a forcing different polynomicals to have the same first and second order derivative. E.g., cubic regression spline
+**Spline** is a forcing different polynomials to have the same first and second order derivative. E.g., cubic regression spline
 
 - splines defined by *basis* function
 - adding intercept constant to $\beta_1 X_1$ for trendline
@@ -54,17 +54,3 @@ DHARMa
 performance
 
 
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
