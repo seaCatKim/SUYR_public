@@ -897,6 +897,13 @@ fert.mcmc %>%
   summarize(sum(PEff > 50)/n())
 ```
 
+# Methods paragraph
+
+The relationship between fertilizer concentration and grass yeild was explored using a Bayesian linear model (#REF) with weakly informative priors. (Either in text or supplemental depending on journal)
+
+- posteriors were generated via a No-U-Turn sampler (NUTS) run for 5000 iterations (excluding the first 1000 warmup samples) from each of three chains and a thinning rate of 5
+- All chains were found to be well mixed and converged (Rhat > 1.05) on a stable posterior and DHARMa residuals revealed no goodness of fit issues.
+- Bayesian models were fit using brms (REF) interface to STAN (REF) within the R statistical and graphical environment (REF)
 
 # Summary figures {.tabset .tabset-faded}
 
