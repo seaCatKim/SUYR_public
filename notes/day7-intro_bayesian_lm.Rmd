@@ -17,7 +17,7 @@ Rev Thomas Bayes thinking about the evolution of belief.
 
 Have some knowledge and challenge that with more knowledge.
 
-Prior knowledge x PD (more information) -> Posterior knowledge
+Prior knowledge x PD (more information/likelihood) -> Posterior knowledge
 
 Bayes formalized this with equations. Problem of conditional probability.
 
