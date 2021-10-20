@@ -65,6 +65,7 @@ library(ggeffects)  #for partial plots
 library(broom.mixed)#for summarising models
 library(ggeffects)  #for partial effects plots
 library(tidyverse)  #for data wrangling etc
+library(patchwork)
 ```
 
 # Scenario
@@ -94,6 +95,10 @@ ABUND   DIST   LDIST   AREA   GRAZE   ALT   YR.ISOL
 
 The aim of the analysis is to investigate the effects of a range of predictors on the abundance of forest birds.
 
+Should be counts but have averages of point quadrats.
+
+No hierarchical structure - there should be but isn't. Point quadrat should be nested within site but instead averaged by site.
+
 # Read in the data
 
 ```{r readData, results='markdown', eval=TRUE}
@@ -101,10 +106,14 @@ loyn = read_csv('../data/loyn.csv', trim_ws=TRUE)
 glimpse(loyn)
 ```
 
+```{r factorize}
+loyn <- loyn %>% mutate(fGRAZE = factor(GRAZE))
+```
 
 
 # Exploratory data analysis
 
+Family candidates - Gaussian, Gamma, Log-normal like
 
 Model formula:
 $$
@@ -116,32 +125,536 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 the scaled versions of distance (ln), distance to the nearest large patch (ln), patch area (ln), grazing intensity, year of isolation and 
 altitude on the abundance of forest birds.
 
+DIST LDIST AREA all log transformed. GRAZE categorical.
+
+Centering more critical in Bayesian for computation. If not done, will be done for us by the model but will do ourselfs for easier comparison with glm.
+
+Center and scale.
+
+1. Easier to compare relative influence of predictors if on the same scale. Can look at the magnitude of the effect and know which one is more important.
+2. More pragmatic - makes it much easier to define priors. All continuous variables on the same scale, therefore can apply the same simple priors to all of them. 
+
+# Priors
+
+Need priors for $\beta_0 \beta_1 \sigma^2$.
+
+
+
+(0, 1) for betas still quite wide on centered and scaled data. 
+
+> Scaling simplifies a lot. Without would have very wide priors and unique per predictor.
+
+$$
+\beta_0 \sim \mathcal{N} (3, 5)\\
+\beta \sim \mathcal{N} (0, 1)\\
+\sigma^2 \sim \Gamma (2, 1)
+$$
+
+```{r priors}
+log10(mean(loyn$ABUND)) # for beta0 mean
+log10(mad(loyn$ABUND)) # for beta0 using median more robust
+
+priors <- prior(normal(3, 5), class = 'Intercept') +
+  prior(normal(0,1), class = 'b') +
+  prior(gamma(2, 1), class = 'sigma')
+```
 
 # Fit the model {.tabset .tabset-faded}
 
+Default priors would have given very similar priors, but defaults may change.
+
+There is a bit of flexibility in defining priors want something between influential and too wide.
+
+(| Site/ Quadrat) if not averaged counts of site for random intercept.
+
+```{r defined priors}
+loyn.brm2 <- brm(bf(ABUND ~ scale(log(DIST)) +
+                       scale(log(LDIST)) +
+                     scale(log(AREA)) +
+                     fGRAZE +
+                       scale(ALT) +
+                     scale(YR.ISOL),
+                     family = gaussian(link = 'log')),
+                  data = loyn,
+                  prior = priors,
+                  sample_prior = 'only',
+                  iter = 5000,
+                  warmup = 2500,
+                  chains = 3,
+                  cores = 3, # chain on each core simultaneously
+                  thin = 5
+                  )
+```
+
+# Prior check
+
+Not too narrow, but allows an extraordinary number of extra birds. Could try (3, 2.5) here for $\beta_0$ but will leave it.
+
+```{r check AREA prior}
+loyn.brm2 %>% conditional_effects() %>% 
+  plot(ask = FALSE) %>% 
+  wrap_plots() # from patchwork
+
+# not working... error
+# loyn.brm2 %>% ggemmeans(~AREA) %>% 
+#   plot(add.data = TRUE) %>% 
+#   scale_y_log10() # above y axis is not transformed
+```
+
+`lapply()` apply a function to each item in a list. First argument is a list, next is a function. Could write a function to add scale y axis, but can also use a lambda function, and undefined function on the fly.
+
+```{r change y axis scale}
+a <- loyn.brm2 %>% conditional_effects() %>% 
+  plot(ask = FALSE)
+length(a) # instructions for the 6 plots
+
+# basically doing
+a[[1]] + scale_y_log10()
+
+a %>% lapply(function(x) x + scale_y_log10()) %>% wrap_plots()
+```
+
+# Refit model sampling for both prior and data
+
+Given that the priors are quite large, expect that the posterior is mostly informed by our data.
+
+Reasonable run time good indication the sampler is not getting stuck.
+
+```{r update model, cache=TRUE}
+loyn.brm3 <- update(loyn.brm2, sample_prior = 'yes')
+```
+
+All continuous variables except fGRAZE which is a factor so a posterior for each level.
+
+prior_beta is relevant for all betas.
+
+```{r get variables}
+loyn.brm3 %>% get_variables()
+```
+
+Posterior for AREA not being influenced by the prior.
+
+```{r check priors AREA}
+loyn.brm3 %>% 
+  hypothesis('scalelogAREA = 0') %>% # is a specific hypothesis, testing that scalelogAREA = 0, just this part would get the hypothesis test, doesn't matter what the var is = to
+  plot() # the prior and posterior graph is a plot
+```
+
+Widths are similar for sigma but not a lot of overlap so is ok.
+
+```{r simga prior post plot}
+loyn.brm3 %>% 
+  hypothesis('sigma = 0', class = '') %>% # class defaults to 'b' so need to change if not asking for b_x from get variables
+  plot()
+```
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+## Trace plots
+```{r trace}
+loyn.brm3$fit %>% stan_trace()
+```
 
+## Autocorrelation
 
+```{r autocorrelation}
+loyn.brm3$fit %>%  stan_ac()
+```
 
+```{r add sigma to plot}
+params <- loyn.brm3 %>% get_variables()
+
+loyn.brm3$fit %>%  stan_ac(pars = params[1:11]) # reglar expression better
+```
+
+Add sigma to plot with regular expressions.
+
+`grepl()` is a regular expression search tool. grep in Linux.
+^ - starts
+. - any character
+* - any number of characters
+| - or
+$ - ends with
+
+Regex come in multiple flavors with updates. `perl = TRUE` saying use the perl standards (latest std) for regex which are more sophisticated. Creates logicals T/F and can use to specify which variables we want to keep.
+
+Could split into two, search x and plot, search y and plot.   
+
+```{r regex sigma to plot}
+wch <- grepl('^b_.*|^sigma$', params, perl = TRUE)
+wch
+params1 <- params[wch]
+
+loyn.brm3$fit %>%  stan_ac(pars = params1)
+```
+
+## Rhat
+
+Measure of convergence want a value of <1.05.
+
+```{r}
+loyn.brm3$fit %>%  stan_rhat()
+```
+
+## Efficiency
+
+Sampling efficiency. Lower values (.5) means throwing out lots of samples so sampler is struggling. Could change priors so more narrow and start again. No real cut off.
+```{r}
+loyn.brm3$fit %>% stan_ess()
+```
+
+## Spaghetti plot
+
+The bump is not really captured. Had lots of predictor variables (10 - including factor dummy varialbes) and only 56 data points. So small bump could be an artefact of small dataset.
+
+Black is the data and made a histogram.
+Light is the realizations of the posteriors.
+
+```{r spaghetti}
+loyn.brm3 %>% pp_check(type = 'dens_overlay')
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## DHARMa residuals
 
+```{r DHARMa}
+preds <- loyn.brm3 %>% posterior_predict(nsamples = 250, summary = FALSE) #ndraws instead of nsample
+
+loyn.resids <- createDHARMa(simulatedResponse = t(preds), # transpose matrix
+                            observedResponse = loyn$ABUND, # only thing that will change
+                            fittedPredictedResponse = apply(preds, 2, median), # calc median for each column
+                            integerResponse = FALSE)
+loyn.resids %>% plot()
+```
 
 # Partial effects plots {.tabset .tabset-faded}
 
+Expect to find from summary:
+
+- substantial decline of birds at GRAZE5
+- increase of birds with increasing LDIST and AREA (severe at the start)
+
+Predictors and response are back-transformed automatically.
+
+```{r partial plots}
+loyn.brm3 %>% 
+  conditional_effects() %>% 
+  plot(ask = FALSE) %>% # don't ask to hit return in console
+  lapply(function(x) x + scale_y_log10()) %>% # lambda function to scale y on all plots
+  wrap_plots() # from patchwork
+```
 
 # Model investigation {.tabset .tabset-faded}
 
+## Summary
+
+Of the effects (exclude Intercept), which one has the biggest impact on birds - fGRAZE5. Can directly compare partial slopes because the predictors have been centered and scaled.
+
+Intercept is average bird ABUND at fGRAZE1, all predictors at average of all variables which are all 0 because they have been centered and scaled.
+
+```{r summary}
+loyn.brm3 %>% summary()
+```
+
+Using credibility interval bit crude. Similar to frequentist to rely on a cut-off for significance.
+
+Bayesian better to calculate an excedence probability. Difference between 95% or 93% likely.
+
+## Tidy MCMC table
+
+```{r tidy table}
+loyn.brm3$fit %>% 
+  tidyMCMC(estimate.method = 'median',
+           conf.int = TRUE, conf.method = 'HPDinterval',
+           rhat = TRUE, ess = TRUE)
+```
 
 
 # Further analyses {.tabset .tabset-faded}
 
+## Exceedence probabilities
 
+Could produce a wide dataframe with a var per column. Other option is the gather and process as a whole.
+
+### Wide exceedence probability example
+
+Wide has 1,500 rows after taking out warmup, thinning, etc.
+
+Hypothesis test for scalelogAREA. Is there any evidence that increasing AREA increases birds? Count positive estimates/slopes divide by total to get a p-value. Hypothesize don't need to be tested on a particular scale. Will effect whether slope is > 0, or > 1 if back-transformed.
+
+Very confident that when AREA increases the bird abundance increases.
+
+```{r wide example}
+loyn.brm3 %>% tidy_draws()
+
+loyn.brm3 %>% tidy_draws() %>% 
+  median_hdci(b_scalelogAREA) # same as tidy table for single variable, could do for each column
+
+loyn.brm3 %>% tidy_draws() %>% 
+  summarize(P = sum(b_scalelogAREA > 0)/n())
+
+```
+
+### Long format example
+
+Useful to indicate which column you want.
+
+15,000 rows = 1,500 x 10 parameters.
+
+```{r long median}
+loyn.brm3 %>% 
+  gather_draws(`^b_.*`, regex = TRUE) %>%  #regex in backticks here, automatically grouped by .variable
+  median_hdci()
+```
+P-value for all variables. Intercept not a sensible one to test - can ignore. Need to test for same logical condition across all variable so need to identify if some are not sensible. Or could calculate both.
+
+Probability that fGRAZE5 has a positive effect - almost 0 because there was a negative effect. 
+
+Is there much evidence GRAZE2/GRAZE3/GRAZE4 differs from GRAZE1 - no.
+
+Evidence AREA has a positive effect.
+
+Not much evidence for other parameters.
+
+Weak evidence that logDIST has a positive effect. Can define justify cutoffs for weak/strong evidence.
+
+All parameters technically for fGRAZE1 level. Have no interactions so assuming slopes for all levels of GRAZE are the same.
+
+```{r long p-value}
+loyn.brm3 %>% 
+  gather_draws(`^b_.*`, regex = TRUE) %>%  #regex in backticks here, automatically grouped by .variable
+  summarize(P = sum(.value > 0) / n(), P2 = sum(.value < 0) / n())
+
+1-0.000666 # probability of fGRAZE negative effect
+```
+
+## R2
+
+```{r r2}
+loyn.brm3 %>% bayes_R2(summary = FALSE) %>% median_hdci()
+```
+
+# Testing other models {.tabset .tabset-faded}
+
+## Distance interaction, connectivity
+
+How do you compare models - AIC. Bayesian there is a better option which requires turnning on `save_pars = save_pars(all = TRUE)`. 
+
+```{r dist interaction, cache=TRUE}
+loyn.brm4a <- update(loyn.brm3, .~ scale(log(DIST)) * scale(log(LDIST)),
+                    save_pars = save_pars(all = TRUE))
+# save(loyn.brm4a, file = '../data/modelled/loyn.brm4a.RData')
+# good idea to save long models and can just load instead of 
+# load(file = '../data/modelled/loyn.brm4a.RData')
+```
+
+## Habitat model
+
+```{r habitat model, cache=TRUE}
+loyn.brm4b <- update(loyn.brm3, .~ scale(log(AREA)) * fGRAZE,
+                    save_pars = save_pars(all = TRUE))
+```
+
+## Area, graze, isloation
+
+```{r dist interaction, cache=TRUE}
+loyn.brm4c <- update(loyn.brm3, .~ scale(log(AREA)) * fGRAZE * scale(YR.ISOL),
+                    save_pars = save_pars(all = TRUE))
+```
+## Altitude
+
+```{r dist interaction, cache = TRUE}
+loyn.brm4d <- update(loyn.brm3, .~ scale(ALT),
+                    save_pars = save_pars(all = TRUE))
+```
+
+## Null Model
+
+```{r null model}
+loyn.brm4e <- update(loyn.brm3, .~ 1,
+                    save_pars = save_pars(all = TRUE))
+```
+
+## Comparing models
+
+### wAIC
+wAIC - Wantannabe AIC
+
+elpd_waid - is like deviance
+p_waic - is like a number of used parameters to calculate AIC, more complex models will have larger numbers. For tie breaks like df in normal AIC
+waic is basically -2 x elpd_waic.
+
+AIC is -2 x deviance.
+
+Was all the rage but now loo is all the rage.
+
+```{r wAIC connectivity}
+waic(loyn.brm4a)
+```
+
+## loo information criteria
+
+leave one out IC
+
+Equivalent of deviance and number of parameters then puts on information criteria scale (-2 x). Similar to wAIC.
+
+Leave one out looks at different combinations of the data. Simulates leaving one out versus actually leaving out and calculate.
+
+Any outlier type values cannot simulate - do not want any bad/very bad values. Will have to go rerun instead of simulating. If have bad/very bad then probably something wrong with the model. Another check for the model.
+
+
+```{r loo}
+loo(loyn.brm4a)
+```
+
+Null has lower ic and higher deviance - implying that no evidence that connectivity model is useful. IC est + SE of connetivity and null overlap so supports connectivity model not useful.
+
+```{r loo 4e}
+loo(loyn.brm4e)
+```
+
+`loo_compare()` puts model it says is best on top on the basis of deviance not order specified in. Shows how different the other model is to best.
+
+Connectivity is 2.5 units of deviance worse than null.
+
+Can use either deviance or info criteria to compare.
+
+```{r loo compare connectivity and null}
+loo_compare(loo(loyn.brm4a), 
+            loo(loyn.brm4e)) # compares based on deviance
+
+-2 * -2.5 # convert to units of information criteria
+```
+
+Both wAIC and loo give same result of connectivity does not add anything useful on top of null model.
+
+## Compare habitat to null model
+
+Habitat model is considered better. Considered 30 units of deviance (60 units of information criteria) better than the null - it is a useful model.
+
+Here always comparing to null.
+
+```{r loo hab and null}
+loo_compare(loo(loyn.brm4b), 
+            loo(loyn.brm4e))
+```
+
+## Bayes factor
+
+Likelihood of one model in favor of another model to know which is the better model.
+
+There is a lot (2e10...) in favor of the habitat model. Magnitude of the number is sensitive to log factor and not that useful. Would not report number in paper for instance. Would say more than 1 etc.
+
+More than 1 favoring first model. Less than 1 favoring second model.
+
+```{r bayes for habitat v null}
+bayes_factor(loyn.brm4b,
+             loyn.brm4e)
+
+bayes_factor(loyn.brm4e,
+             loyn.brm4b)
+```
+
+```{r bayes connectivity v null}
+bayes_factor(loyn.brm4a,
+             loyn.brm4e)
+```
+
+Could compare a model with/without a categorical variable.
+
+# Explore habitat model interaction
+
+Interaction AREA * fGRAZE is significant. Effect of AREA differs between grazing levels.
+
+Estimates give difference between fGRAZE levels at the average area of interaction.
+
+Could ask what the effect of interaction is in different sections of the overall trend. Compare levels of fGRAZE (1-2, 1-3, etc.) at low, average, and high AREA.
+
+Tukey's test lose power with more comparisons - not an issue with Bayesian. No cost for us comparing lots of things here.
+
+Compare levels of GRAZE across AREA at the 3 values of area on the response scale.
+
+contast 1/5 at AREA 0.1:
+
+- ratio 10x more birds in GRAZE1 v GRAZE5 
+- multiplication because of log laws
+- effect as low as 1.8x and up to 58x more birds
+
+```{r pairwise comparisons}
+loyn.list <- with(loyn, list(AREA = c(min(AREA), mean(AREA), max(AREA))))
+loyn.list # should have 3 numbers, also called prediction grid etc
+
+newdata <- loyn.brm4b %>% 
+  emmeans(~fGRAZE|AREA, at = loyn.list, type = 'response') %>% 
+  pairs() %>% 
+  as.data.frame()
+head(newdata)
+```
+
+Wanted to know if there's any evidence between 1/5 at AREA 0.1 - gather those draws.
+
+1,500 comparisons for 1-2, 1-3, etc. 45,000 rows in total.
+
+Scale depends on when back transforming.
+
+Strong evidence more birds at GRAZE1 than GRAZE5 at AREA 0.1 is 0.98. Not saying there is evidence of X much higher.
+
+Setting `.value > 1` to > 1.1 asking for probability of a 10% increase.
+
+```{r 1-5 contrast}
+newdata <- loyn.brm4b %>% 
+  emmeans(~fGRAZE|AREA, at = loyn.list, type = 'response') %>% # same as regrid after pairs, factor scale
+  pairs() %>% 
+  gather_emmeans_draws()
+newdata
+
+newdata %>% 
+  filter(AREA == 0.1, contrast == '1 - 5') %>% 
+  summarize(P = sum(.value > 1)/n()) # 1 because on ratio, is it more than 1x that
+```
+
+On absolute scale. Has it changed by more than 10 birds. Above is more genera - has it changed? Setting .value > 0 is the same question. Can specify a more specific question for ecological significance etc.
+
+```{r 1-5 contrast on absolute}
+newdata.abs <- loyn.brm4b %>% 
+  emmeans(~fGRAZE|AREA, at = loyn.list, type = 'link') %>% 
+  regrid() %>% # before pairs puts on absolute scale, regrid after pairs on factor scale
+  pairs() %>% # asking for difference
+  gather_emmeans_draws()
+
+newdata.abs %>% 
+  filter(AREA == 0.1, contrast == '1 - 5') %>% 
+  summarize(P = sum(.value > 10)/n()) # absolute scale, asking probability of 10 more birds
+```
 
 # Summary figure {.tabset .tabset-faded}
+
+newdata has contrasts on factor scale and posteriors for all draws.
+
+Visual ANOVA tables or catepillar plot with hump.
+
+Similar to halfeye plot. Use `stat_slab()` to modify fill.
+
+```{r summary figure}
+plotdata <- loyn.brm4b %>% 
+  emmeans(~fGRAZE|AREA, at = loyn.list, type = 'link') %>% 
+  pairs() %>% 
+  regrid() %>% 
+  gather_emmeans_draws()
+
+plotdata %>% 
+  ggplot() +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  stat_slab(aes(x = .value, y = contrast, # to change the 
+                fill = stat(ggdist::cut_cdf_qi(cdf,
+                                               .width = c(0.5, 0.8, 0.95),
+                                               labels = scales::percent_format()))),
+            color = 'black') +
+  scale_x_continuous(trans = scales::log2_trans()) +
+  scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) +
+  facet_grid(~round(AREA, 1))
+```
 
 
 
