@@ -395,6 +395,21 @@ newdata <- polis.brm3 %>%
   gather_emmeans_draws() %>% # gathers all draws and puts back all columns which is needed for spaghetti plot
   mutate(Prob = plogis(.value))
 
+newdata1 <- newdata %>% 
+  ungroup %>% # gather emmeans draws groups by variable so need to ungroup
+  group_by(RATIO) %>% 
+  median_hdci()
+
+newdata %>% 
+  ggplot() +
+  geom_line(aes(y = Prob, x = RATIO, group = .draw),
+            alpha = 0.05, show.legend = FALSE) +
+  geom_point(data = polis, aes(y = PA, x = RATIO), color = 'blue') +
+  geom_line(data = newdata1, aes(y = Prob, x = RATIO), color = 'yellow') +
+  theme_classic()
+```
+
+```{r my code}
 line <- newdata %>% group_by(RATIO) %>% 
   summarize(Med = median(plogis(.value)))
 
