@@ -120,6 +120,8 @@ quinn = quinn %>%
 	
 # Exploratory data analysis
 
+Counts so Poisson.
+
 Model formula:
 $$
 \begin{align}
@@ -133,7 +135,304 @@ $$
 
 where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a model matrix representing the intercept and effects of season, density and their interaction on mussel recruitment.
 
-# Fit the model
+${\beta_0}$ is the first category and seven more ${\beta}$.
+
+# Priors
+
+Weakly informative prior is harder to set than informative priors from literature, previous knowledge, etc.
+
+```{r explore}
+quinn %>% group_by(SEASON, DENSITY) %>% summarize(log(median(RECRUITS)), log(mad(RECRUITS))) # robust deviance
+```
+
+$$
+\beta_0 \sim{} \mathcal{N}(3,2)\\
+\beta_x \sim{} \mathcal{N}(0,1)\\
+$$
+
+```{r priors}
+priors <-  prior(normal(2,3), class = 'Intercept') +
+  prior(normal(0, 1), class = 'b')
+```
+
+
+# Fit the model {.tabset .tabset-faded}
+
+Define formula up front like the priors.
+
+```{r model formula up front}
+quinn.form <- bf(RECRUITS ~ SEASON * DENSITY,
+                 family = poisson(link = 'log'))
+```
+
+## Prior only model
+
+```{r prior only model}
+quinn.brm2 <- brm(quinn.form, 
+                 data = quinn,
+                 prior = priors,
+                 sample_prior = 'only',
+                 chains = 3,
+                 iter = 5000,
+                 warmup = 2500,
+                 thin = 5)
+```
+
+We are interested in the interactions here so specifically asking for that plot. If left out would get all plots.
+
+```{r plot}
+quinn.brm2 %>% conditional_effects('SEASON:DENSITY') %>% plot(points = TRUE)
+```
+
+## Prior and data model
+
+```{r update model}
+quinn.brmP <- quinn.brm2 %>% update(sample_prior = 'yes')
+```
+
+Looks good.
+
+```{r check priors}
+quinn.brmP %>% hypothesis('SEASONSummer<0') %>% plot()
+```
+
+Should check all...
+
+```{r check priors}
+quinn.brmP %>% hypothesis('SEASONWinter<0') %>% plot()
+```
+
+### Posterior checks
+
+```{r posterior checks}
+quinn.brmP %>% pp_check(type = 'dens_overlay', ndraws = 250)
+```
+
+# MCMC validation {.typset}
+
+## Trace plots
+
+```{r trace}
+quinn.brmP$fit %>% stan_trace()
+```
+
+## Autocorrelation
+
+```{r autocorr}
+quinn.brmP$fit %>% stan_ac()
+```
+
+## Efficiency
+
+```{r ess}
+quinn.brmP$fit %>% stan_ess()
+```
+
+## Rhat
+
+```{r rhat}
+quinn.brmP$fit %>% stan_rhat()
+```
+
+# Model validation
+
+## DHARMa residuals
+
+Does not look good.
+
+```{r DHARMa}
+preds <- quinn.brmP %>% posterior_predict(ndraws = 250, summary = FALSE) #ndraws instead of nsample
+
+quinn.resids <- createDHARMa(simulatedResponse = t(preds), # transpose matrix
+                            observedResponse = quinn$RECRUITS, # only thing that will change
+                            fittedPredictedResponse = apply(preds, 2, median), # calc median for each column
+                            integerResponse = FALSE)
+quinn.resids %>% plot()
+```
+
+Way over dispersed because red line is way off to the right.
+
+Causes of over dispersion:
+
+1. 0-inflated -> 0-inflated or Hurdle model
+    - not too many, but one category had a lot
+2. More variance than model expects (Poisson in this case). Could fit an observation level random effect.
+
+```{r test disperson}
+quinn.resids %>% testDispersion()
+```
+
+2 out of 3 0s. 
+
+```{r test 0 inflation}
+quinn.resids %>% testZeroInflation()
+```
+ 
+## Negative binomial model
+
+Good for low level 0-inflation and overdispersion.
+
+## NB priors
+
+lambda - mean
+phi - dispersion
+$$
+y_i \sim \mathcal{N}\beta(\lambda, \phi)\\
+\phi \sim{} \Gamma(0.01,0.01)\\
+$$
+
+Can have a look at default priors without having to run the model by specifying formula.
+
+Default priors for fixed effects are the flat priors we don't want to use. What are the expectations
+Intercept priors similar to as defined above.
+
+```{r new model forumla}
+quinn.form <- bf(RECRUITS ~ SEASON * DENSITY, family = negbinomial(link = 'log'))
+
+get_prior(quinn.form, data = quinn) # get default priors
+```
+
+```{r add gamma to priors}
+priors <-  priors + prior(gamma(0.1, 0.1), class = 'shape')
+```
+
+## Fit NB model
+
+Default is to sample from both priors and data. Already knew previous priors were good and gamma prior for NB is standard. Do not have to test priors only model again.
+
+```{r fit NB model}
+quinn.brmNB <- brm(quinn.form,
+                   data = quinn,
+                   chains = 3,
+                   iter = 5000,
+                   warmup = 2500,
+                   thin = 5)
+```
+
+## DHARMa residuals
+
+```{r DHARMa NB}
+preds <- quinn.brmNB %>% posterior_predict(ndraws = 250, summary = FALSE) #ndraws instead of nsample
+
+quinn.resids <- createDHARMa(simulatedResponse = t(preds), # transpose matrix
+                            observedResponse = quinn$RECRUITS, # only thing that will change
+                            fittedPredictedResponse = apply(preds, 2, median), # calc median for each column
+                            integerResponse = FALSE)
+quinn.resids %>% plot()
+```
+
+```{r plot}
+quinn.brmNB %>% conditional_effects('SEASON:DENSITY') %>% 
+  plot(points = TRUE, jitter = c(0.5, 0))
+```
+
+# Model investigation / hypothesis testing
+
+Can get the summary numbers plus more:
+
+```{r gather draws}
+quinn.brmNB %>% get_variables()
+
+quinn.draw <-  quinn.brmNB %>% gather_draws(`^b_.*`, regex = TRUE)
+quinn.draw # numbers on log link scale
+```
+
+Any evidence of interactions? fold scale does credible interval cross 1.
+
+b_SEASONSummer:DENSITYLow - strong evidence of significant interaction
+b_SEASONWinter:DENSITYLow - no evidence of significant interaction, lower/upper crosses 1
+
+```{r table}
+quinn.draw %>% median_hdci() # on log scale
+quinn.draw %>% mutate(Exp = exp(.value)) %>% median_hdci(Exp) # back transform to fold scale
+quinn.draw
+```
+
+## Exceedence p-values
+
+Quick glance on credibility intervals above.
+
+b_SEASONWinter:DENSITYLow above was not 'significant' but here there is some evidence it is a significant interaction.
+
+```{r e pvalues}
+quinn.draw %>% mutate(Exp = exp(.value)) %>% summarize(P1 = sum(Exp > 1)/n(),
+                                                       P2 = sum(Exp < 1)/n())
+```
+
+## Pairwise tests
+
+Evidence of significant interaction - what next?
+
+### Fold scale
+
+Pairwise comparison of seasons separately for each density, or density effects in each season.
+
+Winter is the interesting season - 2x difference between High and Low
+
+```{r density in season effect}
+quinn.brmNB %>% 
+  emmeans(~DENSITY|SEASON, type = 'response') %>% # fold scale
+  pairs()
+```
+
+`pairs()` does difference between contrasts before backtransforming so it is on a fold scale.
+
+```{r gather interaction draws}
+quinn.brmNB %>% 
+  emmeans(~DENSITY|SEASON, type = 'link') %>% # fold scale
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Exp = exp(.value)) -> quinn.em
+quinn.em
+```
+
+Difference between High-Low in spring - no evidence
+Difference between High-Low in Summer - strong evidence
+Difference between High-Low in Autumn - no evidence
+Difference between High-Low in Winter - strong evidence, depsite absolute difference is small. Could express on absolute scale saying represents change of 4 barnacles vs in summer represents change of 20.
+
+```{r p-value calc}
+quinn.em %>% summarize(P = sum(Exp > 1)/n(), P2 = sum(Exp < 1)/n()) # fold scale ref to 1
+```
+
+### Absolute scale
+
+Absolute change in number of recruits between High-Low in Spring is -1 individuals.
+
+Winter was a doubling but only represents 3 more barnacles as shown here on average of lots of samples.
+
+```{r gather interaction draws abs scale}
+quinn.brmNB %>% 
+  emmeans(~DENSITY|SEASON, type = 'link') %>% # fold scale
+  regrid %>% # backtransform before doing difference before pairs
+  pairs() %>% 
+  gather_emmeans_draws() -> quinn.em
+quinn.em %>% median_hdci()
+```
+
+Could still compare to 0 but would be different scale for each interaction. Change in 10 in Winter v Summer is different.
+
+Below is the same as previous p-value calc table.
+
+```{r compare against 0}
+quinn.em %>% summarize(P = sum(.value>0)/n())
+```
+
+# R2
+
+Explaining around 72% of the variance.
+
+```{r r2}
+quinn.brmNB %>% bayes_R2(summary = FALSE) %>% median_hdci()
+```
+
+# Results summary
+
+- Statement about significant interactions.
+- There was strong evidence (**Exceed.** P = 0.9XX) to suggest that the number of recruits was higher in high density treatment populations than low density populations in Winter.
+- Whilst the absolute difference in the number of recruits was 2.9 individuals (CI: -1 to 6), this represented a two-fold (CI: 0.95 - 4.1) increase (see Figure 1). 
+    - good to give CI for all because can't calculate one from the other
+# Rstan code
 
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 head(quinn)
@@ -551,12 +850,5 @@ ggplot(newdata, aes(y=rate, x=SEASON, color=DENSITY)) +
 
 ```
 
-# Model validation
-
-# Model investigation / hypothesis testing
-
-# Predictions
-
-# Summary figures
 
 # References
