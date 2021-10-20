@@ -113,6 +113,10 @@ Start by declaring the categorical variables as factor.
 day = day %>% mutate(TREAT=factor(TREAT))
 ```
 
+Count data - poisson. Lambda only. Only estimate betas.
+
+Log link function.
+
 Model formula:
 $$
 \begin{align}
@@ -127,32 +131,263 @@ where $\boldsymbol{\beta}$ is a vector of effects parameters and $\bf{X}$ is a m
 
 # Exploratory data analysis {.tabset .tabset-faded}
 
+## Explor data for priors
+
+
+
+```{r mean median }
+day %>% group_by(TREAT) %>% summarize(log(median(BARNACLE)),
+                                      log(mad(BARNACLE)))
+mad(day$BARNACLE)
+```
+
+# Priors
+
+$\beta_0$ estimated from above.
+$\beta_i$ pretty standard. 
+
+$$
+\begin{align}
+y_i &\sim{} \mathcal{Pois}(\lambda_i)\\
+ln(\mu_i) &= \boldsymbol{\beta} \bf{X_i}\\
+\beta_0 &\sim{} \mathcal{N}(3,2)\\
+\beta_{1,2,3} &\sim{} \mathcal{N}(0,1)\\
+\end{align}
+$$
+
+```{r set priors as above}
+priors <- prior(normal(3,2), class = 'Intercept') +
+  prior(normal(0,1), class = 'b')
+```
+
 
 # Fit the model {.tabset .tabset-faded}
 
+## Prior only
+
+Prior only to see what values we get from priors alone first.
+
+```{r fit prior only model}
+day.brm2 <- brm(bf(BARNACLE ~ TREAT,
+                   family = poisson(link = 'log')),
+                data = day,
+                prior = priors,
+                sample_prior = 'only',
+                iter = 5000,
+                warmup = 2500,
+                chains = 3,
+                thin = 5)
+```
+
+Suggest priors are not going to influence posteriors.
+
+```{r check priors}
+day.brm2 %>% conditional_effects() %>% plot(points = TRUE)
+```
+
+Priors will not be driving the posteriors.
+
+Big points should be mean of the priors on log scale. Small dots are the data
+
+```{r check priors w scaled y}
+day.brm2 %>% conditional_effects() %>% plot(points = TRUE) %>% 
+  lapply(function(x) x + scale_y_log10())
+```
+
+## Prior and data model
+
+```{r prior and data}
+day.brm3 <- day.brm2 %>% update(sample_prior = 'yes')
+```
+
+Influence of data and priors on the posterior. Big dots are the mean predictions and small dots are the data.
+
+Credible interval is about a collection. What's the population like? 95% sure the population is within the bars from the model versus an individual prediction.
+
+```{r check this model w scaled y}
+day.brm3 %>% conditional_effects() %>% plot(points = TRUE) %>% 
+  lapply(function(x) x + scale_y_log10())
+```
+
+```{r get variables}
+day.brm3 %>% get_variables()
+```
+
+```{r check priors}
+day.brm3 %>% hypothesis('TREATALG2 < 0') %>% plot()
+```
 
 # MCMC sampling diagnostics {.tabset .tabset-faded}
 
+## Trace plots
 
+```{r trace}
+day.brm3$fit %>% stan_trace()
+```
+
+## Autocorrelation
+
+```{r autocorr}
+day.brm3$fit %>% stan_ac()
+```
+
+## Efficiency
+
+```{r ess}
+day.brm3$fit %>% stan_ess()
+```
+
+## Rhat
+
+```{r rhat}
+day.brm3$fit %>% stan_rhat()
+```
+
+## Spaghetti plot
+
+Not fantastic or bad - small dataset. Flat top could be an artefact of that.
+
+```{r spaghetti}
+day.brm3 %>% pp_check(type = 'dens_overlay', ndraws = 250)
+```
 
 # Model validation {.tabset .tabset-faded}
 
+## DHARMa residuals
 
+Looks good.
+
+Residuals, quantiles some have all above or below the line could be variance problem. Residual plot so patterns are bad.
+
+```{r DHARMa}
+preds <- day.brm3 %>% posterior_predict(nsamples = 250, summary = FALSE) #ndraws instead of nsample
+
+day.resids <- createDHARMa(simulatedResponse = t(preds), 
+                            observedResponse = day$BARNACLE, # only thing that will change
+                            fittedPredictedResponse = apply(preds, 2, median), 
+                            integerResponse = TRUE) # poisson need to tell it to make integer predictions
+day.resids %>% plot()
+```
 
 
 # Partial effects plots {.tabset .tabset-faded}
 
+Expectations:
+
+- alg2 more barnacles than alg1
+- algae more than bare and scrape
+
+```{r partial plot}
+day.brm3 %>% 
+  ggemmeans(~TREAT) %>% 
+  plot(add.data = TRUE, jitter = c(0.5, 0)) # only jitter on the x
+```
 
 
 # Model investigation {.tabset .tabset-faded}
 
+Intercept 3.10 on a log scale -> 22
 
- 
+ALG2 0.24 -> 1.28 x more than ALG1 on a fold scale.
+
+```{r summary}
+day.brm3 %>% summary() # useful in a table, maybe back transformed
+
+exp(3.1)
+exp(0.24) # 1.28 x more than ALG1 on a fold scale
+
+exp(3.1 + 0.25) # number in alg2
+exp(3.1 + 0.25) - exp(3.09) # ~6 more in alg2
+```
+
+Calculate ourselves and have full control.
+
+```{r get var2}
+day.brm3 %>% get_variables()
+```
+
+Using gather draws need to nominate which variables we want.
+
+```{r gather dras}
+day.draw <- day.brm3 %>% 
+  gather_draws(`^b_.*`, regex = TRUE) # back ticks
+day.draw
+```
+
+Stuff on fold/factor scale (is a ratio of that:this)
+
+Nicer table to use. 
+
+1.27x more in alg2 than alg1.
+
+0.68x recruits in NB compared to ALG1. 0.6x recruits in X than ALG1.
+
+```{r factor scale table}
+day.draw %>% mutate(Exp = exp(.value)) %>% median_hdci(Exp)
+```
+
+Probability barnacles in ALG2 in ALG1. Scale does not matter for testing hypothesis - the cut off of comparison changes though.
+
+How much evidence for this change?
+
+`P1 = sum(Exp > 1)` on fold scale so > 1. Using .value would be > 0.
+
+Strong evidence more barnacles on ALG2 than ALG1.
+
+A lot of evidence that ALG1 has more recruits than naturally bare.
+
+```{r p-values}
+day.draw %>% mutate(Exp = exp(.value)) %>% summarize(P1 = sum(Exp > 1)/n(), # positive
+                                                     P2 = sum(Exp < 1)/n()) # negative
+```
+
 # Further investigations 
 
+Bayesian can do whatever contrasts - no statistical constraints. Don't even have to be independent.
+
+Posterior does not change so one test does not have any bearing on another test.
 
 ## Post-hoc test (Tukey's){.tabset .tabset-faded}
 
+### Standard Tukey's test
+
+ratio - ALG1 has 1.48x more recruits than NB.
+
+Have some of the same tests ALG1/ALG2, but expressed opposite terms. 1.22 vs 0.78.
+
+Any evidence that ALG2 and NB are different? Any evidence that more on NB than S?
+
+NB/S includes 1 so no evidence. But not quantifying the evicence.
+
+```{r std tukeys}
+day.brm3 %>% emmeans(~TREAT, type = 'response') %>% 
+  pairs()
+```
+
+Strong evidence more on AGL2 than NB.
+
+Weak evidence more on NB than S.
+
+> < 0.8 is weak
+
+```{r gather draws}
+day.brm3 %>% emmeans(~TREAT, type = 'link') %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% # gather the draws
+  mutate(Fit = exp(.value)) -> day.em # back transformed here to factor scale
+
+day.em %>% summarize(P = sum(Fit > 1)/n(), P2 = sum(Fit < 1)/n()) # 1 for factor
+```
+
+No evidence 20% difference between ALG1-ALG2.
+
+Strong evidence (92% confidence) that ALG1 has 20% more recruits than NB.
+
+Not inverse because ... certain conditions don't apply. <10%?
+
+```{r}
+day.em %>% summarize(P1 = sum(Fit > 1.2)/n(), P2 = sum(Fit < 0.8)/n()) # 1/1.2 is 0.8
+```
 
 
 ## Planned contrasts{.tabset .tabset-faded}
@@ -163,11 +398,68 @@ Compare:
 
 a) ALG1 vs ALG2
 b) NB vs S
-c) average of ALG1+ALG2 vs NB+S
+c) average of ALG1+ALG2 vs NB+S - limit of frequentist
+d) average of ALG1+ALG2 to NB
 
+Covariance matrix. Must know the levels of your categories. The order is important.
+
+Frequentist - have already violated 2 assumptions. No independnet, too many comparisons.
+
+```{r cmat}
+cmat <- cbind('Alg2_Alg1' = c(-1, 1, 0, 0), # order of levels ALG1 ALG2 NB S
+              'NB_S' = c(0, 0, 1, -1),
+              'Alg_Bare' = c(0.5, 0.5, -0.5, -0.5),
+              'Alg_NB' = c(0.5, 0.5, -1, 0))
+```
+
+Already seen ~30% more from ALG2-ALG1. Didn't see last 2.
+
+77% > recruitment in ave ALGE vs Bare.
+66% > recruitment in ave ALG vs naturally bare.
+
+```{r fit contrasts}
+day.brm3 %>% 
+  emmeans(~TREAT, type = 'response') %>% 
+  contrast(method = list(TREAT = cmat))
+```
+
+Same code as before but replacing `pairs()` with `contrast()`.
+
+Strong evidence more recruits on algal surface than bare.
+
+```{r probability contrasts}
+day.brm3 %>% 
+  emmeans(~TREAT, type = 'link') %>% 
+  contrast(method = list(TREAT = cmat)) %>% 
+  gather_emmeans_draws() %>%  # bug seems to forget we want on response so just do link
+  mutate(Fit = exp(.value)) -> day.em
+
+day.em %>% 
+  summarize(P = sum(Fit > 1)/n(), P2 = sum(Fit < 1)/n())
+```
 
 # Summary Figure {.tabset .tabset-faded}
 
+Xintercept at 1.5 denotes 50% increase.
+
+Strong evidence that ALG2 > ALG1, but week evidence that it is 50% more.
+
+Fold scale is nice for ecological data. X% percent more vs Y individuals more.
+
+```{r summary on fold scale}
+day.em %>% 
+  ggplot() +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  geom_vline(xintercept = 1.5, alpha = 0.3, linetype = 'dashed') +
+  stat_slab(aes(x = Fit, y = contrast,
+                fill = stat(ggdist::cut_cdf_qi(cdf,
+                                               .width = c(0.5, 0.8, 0.95),
+                                               labels = scales::percent_format())
+                            )), color = 'black') +
+  scale_fill_brewer('Interval', direction = -1, na.translate = FALSE) +
+  scale_x_continuous(trans = scales::log2_trans(), breaks = c(0.5, 0.8, 1, 1.2, 1.5, 2, 4)) +
+  theme_classic()
+```
 
 
 
