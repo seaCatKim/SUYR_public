@@ -92,9 +92,17 @@ LEAF   TREAT    NUMBER
 
 # Read in the data
 
+Should be counts but averaged counts from subsamples on leaf. Often ok to model with Gaussian - central limit theorm - if numbers are big enough and far enough from 0.
+
 ```{r readData, results='markdown', eval=TRUE}
 tobacco = read_csv('../data/tobacco.csv', trim_ws=TRUE)
 glimpse(tobacco)
+```
+
+```{r factorize}
+tobacco <- tobacco %>% mutate(LEAF = factor(LEAF),
+                              TREATMENT = factor(TREATMENT))
+tobacco %>% head()
 ```
 
 
@@ -104,7 +112,7 @@ glimpse(tobacco)
 Model formula:
 $$
 y_i \sim{} \mathcal{N}(\mu_i, \sigma^2)\\
-\mu_i =\bf{X_i}\boldsymbol{\beta} + \bf{Z_i}\boldsymbol{\gamma} \\
+\mu_i =\bf{X_i}\boldsymbol{\beta} + \bf{Z_i}\boldsymbol{\gamma}\\
 \beta_0 \sim{} \mathcal{N}(31, 10)\\
 \beta_1 \sim{} \mathcal{N}(0, 10)\\
 \boldsymbol{\gamma} \sim{} \mathcal{N}(0, \boldsymbol{\Sigma})\\
@@ -134,6 +142,11 @@ covariance matrix, so instead, the covariance matrix is decomposed into a
 correlation matrix ($\boldsymbol{\Omega}$) and a vector of variances
 ($\boldsymbol{\sigma_l}$) which are the diagonals ($\boldsymbol{D}$) of the
 covariance matrix.
+
+$\beta_0$ is the average number of lesions for the strong group.
+$\beta_1X_1$ slope is the averabe of all the slopes.
+$\gamma_z$ leaf variance?
+
 - $\boldsymbol{\Omega}$ 
 $$
 \gamma \sim{} N(0,\Sigma)\\
@@ -175,252 +188,310 @@ A symmetric Dirichlet prior is used for the simplex vector.  The Dirichlet
   arguments of the lkj function.
 - the lkj prior is similar, yet faster than decov
 
+# Priors
+
+```{r medians mads}
+tobacco %>% group_by(TREATMENT) %>% 
+  summarize(median(NUMBER),
+            mad(NUMBER))
+```
+
+Effects always centered on 0, some could be positive, some negative.
+
+10 variance for $\beta_1$ rough difference between levels.
+
+Variance for leaves could be very small - all leaves identical - and so want distribution with mass close to 0.
+
+$$
+\beta_0 \sim{} \mathcal{N}(35, 5)\\
+\beta_1 \sim{} \mathcal{N}(0, 10)\\
+\sigma^2 \sim{} \Gamma(2,0.5)\\
+\sigma_j^2 \sim{} \mathcal{Cauchy}(0,2)
+$$
+
+Numbers are large ~30s so gamma(2,1) might be too narrow. Very little variation around 5. Want the gamma a bit wider.
+
+Cauchy has mass close to 0 which is what we want for random effects. Cauchy has shrinkage tendency. Likely to have small variance, the more leaves you average variance is likely to be small.
+
+```{r viz gamma}
+standist::visualize("gamma(2,1)", xlim = c(-10, 50))
+standist::visualize('gamma(2,1)', 
+"gamma(2,0.5)",
+"cauchy(0,5)", # 0 is always 0, go up in 1, 2, 5, 10 for 2nd number - want 'squared squares'
+"cauchy(0,2)",
+xlim = c(-10, 50))
+```
+
+```{r set prior}
+priors <- prior(normal(35,5), class = 'Intercept') +
+  prior(normal(0, 10), class = 'b') +
+  prior(gamma(2, 0.5), class = 'sigma') + # sigma is family variance
+  prior(cauchy(0, 5), class = 'sd') # sd is the random effect
+```
+
 # Fit the model {.tabset .tabset-faded}
 
+Forumla resembles formula for frequentist random effects.
 
+(1|LEAF) - random intercept for each leaf.
 
-
-
-
-
-
-
-
-
-
-# Fit the model
-
-```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
-
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT)) + geom_boxplot()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_line()
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT, group=LEAF)) + geom_line()
-
-tobacco.rstanarm <- stan_glmer(NUMBER~(1|LEAF)+TREATMENT, data=tobacco,
-                           family=gaussian,refresh=0,
-                            prior_PD=TRUE, 
-                           chains=3, iter=5000, warmup=2000, thin=5)
-prior_summary(tobacco.rstanarm)
-## decov is prior on covariance
-
-tobacco.rstanarm <- stan_glmer(NUMBER~(1|LEAF)+TREATMENT, data=tobacco,
-                            family=gaussian,refresh=0,
-                            prior_intercept=normal(35, 10, autoscale=FALSE),
-                            prior=normal(0, 10, autoscale=FALSE),
-                            prior_aux=rstanarm::exponential(0.1, autoscale=FALSE),
-                            prior_covariance=decov(1, 1, 1, 1), 
-                            prior_PD=TRUE, 
-                           chains=3, iter=5000, warmup=2000, thin=5)
-
-prior_summary(tobacco.rstanarm)
-
-ggpredict(tobacco.rstanarm) %>% plot(add.data=TRUE)
-
-tobacco.rstanarm <- update(tobacco.rstanarm, prior_PD=FALSE)
-
-ggpredict(tobacco.rstanarm) %>% plot(add.data=TRUE)
-
-posterior_vs_prior(tobacco.rstanarm, color_by='vs', group_by=TRUE,
-                   facet_args=list(scales='free_y'))
-
-
-
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
-                            family=gaussian,refresh=0,
-                            prior_PD=TRUE, 
-                           chains=3, iter=5000, warmup=2000, thin=5)
-prior_summary(tobacco.rstanarm1)
-
-ggpredict(tobacco.rstanarm1) %>% plot(add.data=TRUE)
-
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
-                            family=gaussian,refresh=0,
-                            prior_intercept=normal(35, 10, autoscale=FALSE),
-                            prior=normal(0, 10, autoscale=FALSE),
-                            prior_aux=rstanarm::exponential(0.1, autoscale=FALSE),
-                            prior_covariance=decov(1, 1, 1, 1), 
-                            prior_PD=TRUE, 
-                           chains=3, iter=5000, warmup=2000, thin=5)
-
-tobacco.rstanarm1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
-                            family=gaussian,refresh=0,
-                            prior_intercept=normal(35, 10, autoscale=FALSE),
-                            prior=normal(0, 10, autoscale=FALSE),
-                            prior_aux=rstanarm::exponential(0.1, autoscale=FALSE),
-                            prior_covariance=decov(1, 1, 1, 1), 
-                            prior_PD=TRUE, 
-                            chains=3, iter=5000, warmup=2000, thin=5,
-                            adapt_delta=0.99)
-
-ggpredict(tobacco.rstanarm1) %>% plot(add.data=TRUE)
-tobacco.rstanarm1 <- update(tobacco.rstanarm1, prior_PD=FALSE)
-tobacco.rstanarm1 <- update(tobacco.rstanarm1, prior_PD=FALSE, adapt_delta=0.99)
-
-ggpredict(tobacco.rstanarm1) %>% plot(add.data=TRUE)
-
-posterior_vs_prior(tobacco.rstanarm1, color_by='vs', group_by=TRUE,
-                   facet_args=list(scales='free_y'))
-
-
-plot(tobacco.rstanarm1,  'mcmc_trace')
-plot(tobacco.rstanarm1,  'mcmc_acf_bar')
-plot(tobacco.rstanarm1,  'mcmc_rhat_hist')
-plot(tobacco.rstanarm1,  'mcmc_neff_hist')
-
-pp_check(tobacco.rstan)
-pp_check(tobacco.rstan, group='TREATMENT', plotfun='violin_grouped')
-
-## tobacco.rstan1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
-##                            family=gaussian,refresh=0,
-##                            chains=3, iter=5000, warmup=2000, thin=5)
-
-## tobacco.rstan1 <- stan_glmer(NUMBER~(TREATMENT|LEAF)+TREATMENT, data=tobacco,
-##                            family=gaussian,refresh=0,
-##                            chains=3, iter=5000, warmup=2000, thin=5,
-##                            adapt_delta=0.99)
-
-## plot(tobacco.rstan1,  'mcmc_trace')
-## plot(tobacco.rstan1,  'mcmc_acf_bar')
-## plot(tobacco.rstan1,  'mcmc_rhat_hist')
-## plot(tobacco.rstan1,  'mcmc_neff_hist')
-
-
-preds <- posterior_predict(tobacco.rstanarm1,  nsamples=250,  summary=FALSE)
-tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
-                            fittedPredictedResponse = apply(preds, 2, median), 
-                            integerResponse=FALSE)
-plot(tobacco.resids)
-
-(l.1 <- loo(tobacco.rstanarm))
-(l.2 <- loo(tobacco.rstanarm1))
-loo_compare(l.1, l.2)
-
-preds <- posterior_predict(tobacco.rstanarm,  nsamples=250,  summary=FALSE)
-tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(tobacco.resids)
-
-
-ggpredict(tobacco.rstanarm) %>% plot
-##ggemmeans(tobacco.rstan, ~TREATMENT) %>% plot
-
-summary(tobacco.rstanarm)
-tidyMCMC(tobacco.rstanarm$stanfit,conf.int=TRUE, conf.method='HPDinterval',
-         rhat=TRUE, ess=TRUE, estimate.method='median') %>%
-  data.frame
-
-bayes_R2(tobacco.rstanarm, re.form=NA) %>% median_hdci
-bayes_R2(tobacco.rstanarm, re.form=~(1|LEAF)) %>% median_hdci
-
-newdata = emmeans(tobacco.rstanarm, ~TREATMENT) %>%
-    gather_emmeans_draws() %>%
-    spread(key=TREATMENT, value=.value)
-newdata
-newdata = newdata %>% mutate(Eff = Strong-Weak,
-                   PEff = 100*(Strong-Weak)/Weak)
-newdata %>% dplyr::select(Eff,PEff) %>% median_hdci
-newdata %>% summarize(Prob = sum(PEff>0)/n())
-newdata %>% summarize(Prob = sum(PEff>10)/n())
-hypothesis(newdata,  'PEff>0')
-hypothesis(newdata,  'PEff>10') 
-
-
-newdata = emmeans(tobacco.rstanarm, ~TREATMENT) %>% as.data.frame
-head(newdata)
-ggplot(newdata, aes(y=emmean, x=TREATMENT)) +
-    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
+```{r formula}
+tobacco.form <- bf(NUMBER ~ (1|LEAF) + TREATMENT,
+                   family = gaussian())
 ```
 
-```{r fitModel.brms, results='markdown', eval=FALSE, hidden=TRUE}
-tobacco = tobacco %>% mutate(LEAF=factor(LEAF),
-                             TREATMENT=factor(TREATMENT))
-head(tobacco)
+## Prior only
 
-ggplot(tobacco, aes(y=NUMBER,x=TREATMENT)) + geom_boxplot()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_line()
-ggplot(tobacco, aes(y=NUMBER,x=as.numeric(LEAF), linetype=TREATMENT)) + geom_blank(aes(x=LEAF)) + geom_line()
-
-tobacco.form <- bf(NUMBER~(1|LEAF)+TREATMENT,  family=gaussian)
-
-tobacco.brms <- brm(tobacco.form, data=tobacco,
-                           refresh=0,
-                           chains=3, iter=5000, warmup=2000, thin=5)
-tobacco.brms <- brm(tobacco.form, data=tobacco,
-                           refresh=0,
-                    chains=3, iter=5000, warmup=2000, thin=5,
-                    control=list(adapt_delta=0.99))
-
-
-mcmc_plot(tobacco.brms,  type='trace')
-mcmc_plot(tobacco.brms,  type='acf_bar')
-mcmc_plot(tobacco.brms,  type='rhat_hist')
-mcmc_plot(tobacco.brms,  type='neff_hist')
-
-tobacco.form <- bf(NUMBER~(TREATMENT|LEAF)+TREATMENT,  family=gaussian)
-tobacco.brms1 <- brm(tobacco.form, data=tobacco,
-                     refresh=0,
-                     chains=3, iter=5000, warmup=2000, thin=5,
-                     control=list(adapt_delta=0.99))
-
-mcmc_plot(tobacco.brms1,  type='trace')
-mcmc_plot(tobacco.brms1,  type='acf_bar')
-mcmc_plot(tobacco.brms1,  type='rhat_hist')
-mcmc_plot(tobacco.brms1,  type='neff_hist')
-
-(l.1 <- loo(tobacco.brms))
-(l.2 <- loo(tobacco.brms1))
-loo_compare(l.1, l.2)
-
-
-preds <- posterior_predict(tobacco.brms,  nsamples=250,  summary=FALSE)
-tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
-                            fittedPredictedResponse = apply(preds, 2, median))
-plot(tobacco.resids)
-
-preds <- posterior_predict(tobacco.brms1,  nsamples=250,  summary=FALSE)
-tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
-                            observedResponse = tobacco$NUMBER,
-                            fittedPredictedResponse = apply(preds, 2, median),
-                            integerResponse = TRUE)
-plot(tobacco.resids)
-
-
-ggpredict(tobacco.brms1) %>% plot
-##ggemmeans(tobacco.rstan, ~TREATMENT) %>% plot
-
-summary(tobacco.brms)
-tidyMCMC(tobacco.brms1$fit,
-         conf.int=TRUE, conf.method='HPDinterval',
-         rhat=TRUE, ess=TRUE,
-         estimate.method='median')
-
-bayes_R2(tobacco.brms1, re.form=~(1|LEAF), summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms, re.form=~(1|LEAF), summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms1, re.form=~(TREATMENT|LEAF), summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms1, re.form=NA,  summary=FALSE) %>% median_hdi
-bayes_R2(tobacco.brms1, re.form=NA,  summary=FALSE) %>% median_hdi
-
-newdata = emmeans(tobacco.brms1, ~TREATMENT) %>%
-    gather_emmeans_draws() %>%
-    spread(key=TREATMENT, value=.value)
-newdata
-newdata = newdata %>% mutate(Eff = Strong-Weak,
-                   PEff = 100*(Strong-Weak)/Weak)
-newdata %>% dplyr::select(Eff,PEff) %>% median_hdi
-newdata %>% summarize(Prob = sum(PEff>0)/n())
-newdata %>% summarize(Prob = sum(PEff>20)/n())
-hypothesis(newdata,  'PEff>0')
-newdata %>% summarize(Prob = sum(PEff>50)/n())
-hypothesis(newdata,  'PEff>20') 
-
-
-newdata = emmeans(tobacco.brms1, ~TREATMENT) %>% as.data.frame
-head(newdata)
-ggplot(newdata, aes(y=emmean, x=TREATMENT)) +
-    geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
+```{r fit model, cache  = T}
+tobacco.brm2 <- brm(tobacco.form,
+                    data = tobacco,
+                    iter = 5000,
+                    warmup = 2500,
+                    prior = priors,
+                    sample_prior = 'only',
+                    chains = 3,
+                    thin = 5)
 ```
 
-# References
+Bit suspect. Expect range to be wider - 100s to 0. Could make 
+
+```{r conditional plot of priors}
+tobacco.brm2 %>% conditional_effects()
+```
+
+## Prior and data model
+
+```{r update model, cache = T}
+tobacco.brm2<- update(tobacco.brm2, sample_prior = 'yes')
+```
+
+```{r prior and data conditional}
+tobacco.brm2 %>% conditional_effects()
+```
+
+# Random intercept and slope
+
+TREATMENT|LEAF - treatment varies within a leaf. 
+
+```{r random slope formula}
+tobacco.form <- bf(NUMBER ~ (TREATMENT|LEAF) + TREATMENT,
+                   family = gaussian())
+```
+
+**Warning:** Divergent transitions after warmup. Divergent transition is like the ball being hit and the ball falling off the surface. Has to try and start again like golf hitting back into the water and going back to whereyou started. Also likely to hit it off again.
+
+Random effects model often have a 'funnel' shape. In wider bit easy to sample but traveling down to skinny bit and falling off.
+
+One or two is okay (under 10) - but hundreds need to deal with it. Any are considered not ideal.
+
+1. Could tighten standard deviation priors.
+2. Improve the learning of figuring out step length - can take model longer to run - similar to taking small steps. The velocity the ball on surface is being hit.
+
+If still have divergent transitions with adapt_delta could go back and modify Cauchy - decrease 5 to 2.
+
+```{r fit random slope model, cache = TRUE}
+tobacco.brm3 <- brm(tobacco.form,
+                    data = tobacco,
+                    prior = priors,
+                    sample_prior = 'yes',
+                    iter = 5000,
+                    warmup = 2500,
+                    chains = 3,
+                    thin = 5,
+                    control = list(adapt_delta = 0.9)) # default is 0.7, uses great percentage of warmup to attempt to stabilize learning the velocity
+```
+
+## Compare the random intercept/slope model
+
+leave one out
+
+Could get a warning x observations with a pareto_k > 0.7 - typically because of small dataset. Measure of whether you can simulate each observation because values are unusual so might not be simulating very well. If have lots cannot rely on information criteria. One or ok - few 'bad' okay.
+
+Slope model is better but by little - SEs overlap.
+
+```{r loo}
+(l.1 <- tobacco.brm2 %>% loo()) # wrap in () assign and print
+(l.2 <- tobacco.brm3 %>% loo())
+```
+
+Top model is better and shows different between two.
+
+Difference is not much - likely not much difference in the results. In Bayesian, do not take up degrees of freedom having more complicated model.
+
+```{r loo compare}
+loo_compare(l.1 = l.1, l.2)
+```
+
+Priors that we used. 
+
+We set Intercept, b, Cauchy (sd), gamma (sigma).
+
+With random intercept and slope, model also includes correlation between intercept and slope. If allow both the vary they are likely to be correlated.
+
+Have a line will pivot around a multidimensional mean of x and y -> correlation between intercept and slope.
+
+Buried deep within variance-covariance matrix. Defaults for those is the only sensible prior could only apply - don't need to worry about it. Is a 1 - correlation should be between -1 and 1. Don't know/don't care if correlation is negative or prior. Default very unlikely to change.
+
+One for overall model and one for random effects - one for everything is fine. 
+
+```{r prior summary}
+prior_summary(tobacco.brm3)
+```
+
+b_ is posteriors, sd_ variability between leaves, r_ difference between intercept and slopes.
+
+```{r get model variables}
+tobacco.brm3 %>% get_variables()
+```
+
+
+
+
+Prior much wider than posterior, don't even have the same center - so good.
+
+This one and also plot fo sd_ s (2 more).
+
+```{r plot priors and posterior}
+tobacco.brm3 %>% hypothesis('TREATMENTWeak = 0') %>% plot()
+tobacco.brm3 %>% hypothesis('LEAF__Intercept = 0', class = 'sd') %>% plot()
+tobacco.brm3 %>% hypothesis('LEAF__TREATMENTWeak = 0', class = 'sd') %>% plot()
+# tobacco.brm3 %>% hypothesis('sigma', class = 'sigma') %>% plot()
+```
+
+# MCMC Validation {.tabset .tabset-faded}
+
+Select variables to test.
+
+```{r regex variables}
+params <- tobacco.brm3 %>% get_variables()
+wch <- grepl('^b_.*|^sd_.*|^cor_.*|^sigma$', params, perl = TRUE) # in quotes for grep
+wch
+params1 <- params[wch]
+params1
+```
+
+## Trace plots
+
+```{r trace}
+tobacco.brm3$fit %>% stan_trace(pars = params1)
+
+```
+
+## Autocorrelation
+
+Some suggesting low level autocorrelation in sigma. Slowing down learning rate making shorter step to autocorrelation - only 1 variable here. Solution is to increase thinning to +4, where it dropped off to nothing, so thin to 10. Thinning keeps every Xth. If upping the thinning would also increase iterations. Can start with 10-20k so wouldn't have to increase iterations when upping thinning.
+
+```{r ac}
+tobacco.brm3$fit %>% stan_ac(pars = params1)
+```
+
+## Rhat
+
+All good - less than 1.05.
+
+```{r rhat}
+tobacco.brm3$fit %>% stan_rhat()
+```
+
+## Efficiency
+
+```{r ESS}
+tobacco.brm3$fit %>% stan_ess()
+```
+
+## Spaghetti
+
+Match distribution of actual data to realizations. With small datasets might look strange.
+
+```{r spaghetti}
+tobacco.brm3 %>% pp_check(type = 'dens_overlay', nsamples = 250)
+```
+
+# Model validation
+
+DHARMa residuals.
+
+```{r DHARMa}
+preds <- tobacco.brm3 %>% posterior_predict(nmsaples = 250, summary = FALSE)
+tobacco.resids <- createDHARMa(simulatedResponse = t(preds),
+                               observedResponse = tobacco$NUMBER,
+                               fittedPredictedResponse = apply(preds, 2, median),
+                               integerResponse = FALSE)
+plot(tobacco.resids, quantreg = FALSE)
+```
+
+Underdispersed - red line is to the left. Will make test more conservatives which is not a bad thing - if still have effects with underdispersed model would leave it.
+
+```{r dispersion}
+testDispersion(tobacco.resids)
+```
+
+# Partial plot
+
+Expecting:
+
+- negative effect of weak
+
+```{r partial plot}
+tobacco.brm3 %>% 
+  conditional_effects() %>% 
+  plot(points = TRUE)
+```
+
+# Model investigation
+
+Population level effects like fixed effects:
+
+- Intercept (mean of 1st group) - 35. 
+- Negative effect of treatment between strong-weak. 
+- Credibility invervals do not include 0 so at a 95% interval there is strong evidence of an effect.
+
+Family specific parameters - sigma for y.
+
+- Estimated around 4. About 4 units of variation within a treatment within a leaf. 
+- How variable treatments withn leaves are - how variable strong is within leaves.
+
+Group level or random effects:
+
+- Consistency of treatment effect - some leaves don't act the same.
+- sd(Intercept) - gamma sigma - how varied are the intercepts are at Strong treatment. Fairly similar to sigma ~4. Lesions vary homogenously over those scales both between leaves and within leaves (all for just strong treatment)
+- sd(TREATEMENTWeak) - treatment effect between leaves.
+
+More implcations of futher work. Here is okay. Variability between leaf and treatment similar.
+
+Could look at variability between transect/site/reef and get an idea if need more/less of experimental design.
+
+How things vary on different scales.
+
+```{r summary}
+tobacco.brm3 %>% summary()
+```
+
+## R2
+
+How much does treatment (fixed effects) account for the variability. Around 35%. 
+
+Marginalizing or averaging over the random effect
+
+```{r marginal random effect}
+tobacco.brm3 %>% 
+  bayes_R2(re.form = NA, summary = FALSE) %>% 
+  median_hdci()
+```
+
+Conditional on just the random intercepts. 61% 
+
+```{r conditional}
+tobacco.brm3 %>% 
+  bayes_R2(re.form = ~(1|LEAF), summary = FALSE) %>% 
+  median_hdci()
+```
+
+Take into account leaves respond differently to treatment - slopes and intercept - 68%.
+
+```{r intercet and slope}
+tobacco.brm3 %>% 
+  bayes_R2(re.form = ~(TREATMENT|LEAF), summary = FALSE) %>% 
+  median_hdci()
+```
+
