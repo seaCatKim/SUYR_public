@@ -61,11 +61,26 @@ library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
 library(brms)
+library(ggeffects)
+library(tidybayes)
 ```
 
 # Scenario
 
 Someone did something for some reason.....
+
+Semi captive owls, food supplemented, returning parent male/female. Measured (count) number of calls. NegPerChick calls standardize per nest (calls/broodsize).
+
+Use sibling negotiation (calls, reasonable distribution) and offset by NegPerChick (harder distribution). Hard to model density - do counts and offset -> will come out as density because you offset.
+
+Offsets v weights?
+Weights - how much baring does this observation have compared to another. Could do it in a similar way if you had 2x area could count that as a weight but biasing toward the weight. I trust weighted counts more than others - affects the mean and the variance. Offset just affects the mean.
+
+Measured through time. All occured in nest - nest effect. Blocking design.
+
+      Nest
+     /    \
+Foodtreat   Sexparent
 
 # Read in the data
 
@@ -74,8 +89,18 @@ owls = read_csv('../data/owls.csv', trim_ws=TRUE)
 glimpse(owls)
 ```
 
+```{r factorize}
+owls <- owls %>% 
+  mutate(Nest = factor(Nest),
+         FoodTreatment = factor(FoodTreatment),
+         SexParent = factor(SexParent),
+         NCalls = SiblingNegotiation)
+```
+
 
 # Exploratory data analysis
+
+Poisson - count, link = log
 
 Model formula:
 $$
@@ -88,9 +113,473 @@ and $\bf{X}$ is the model matrix representing the overall intercept and effects 
 Brood size was also incorporated as an offset.
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual nests.
 
-# Fit the model
+$\beta_0$ average calls for Deprived, Female group
+3 more $\betas$s of the difference between Deprived/Males, Satiated/Females, Satiated/Males
+
+What about nests?
+$\gamma$ how each nest differed.
+
+# Priors
+
+Offset does not have parameter - no prior - like a constant.
+
+```{r med mad}
+owls %>% group_by(FoodTreatment, SexParent) %>% 
+  summarize(log(median(NCalls)),
+            log(mad(NCalls)))
+```
+
+$$
+\beta_0 \sim \mathcal{N} (1.8, 5)\\
+\beta_1 \sim \mathcal{N}(0, 2)\\
+\sigma^2 \sim \mathcal{Cauchy}(0,1)
+$$
+
+```{r priors}
+priors <- prior(normal(1.8,5), class = 'Intercept') +
+  prior(normal(0,2), class = 'b') +
+  prior(cauchy(0,1), class = 'sd')
+```
+
+# Fit the model {.tabset .tabset-faded}
+
+Logged the offset - not parameterized. Assumes offset is on the same scale. Logged here because using a log link function. Offset scale must match the link we used.
+
+```{r intercept formula}
+owls.form <- bf(NCalls ~ FoodTreatment * SexParent +
+                offset(log(BroodSize)) + (1|Nest),
+                family = poisson(link = 'log'))
+```
+
+## Random intercept model
+
+### Prior only model
+
+```{r fit itercept}
+owls.brm2 <- brm(owls.form,
+                 data = owls,
+                 prior = priors,
+                 sample_prior = 'only',
+                 iter = 5000,
+                 warmup = 2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 10)
+```
+
+Satisfied quite wide.
+
+```{r conditiona}
+owls.brm2 %>%  conditional_effects('FoodTreatment:SexParent') %>% plot()
+```
+
+### Fit intercept model with data
+
+```{r intercept with data}
+owls.brm2 <- update(owls.brm2, 
+                    sample_prior = 'yes', 
+                    seed = 123)
+```
+
+Plot here represents total number of calls per next not number of calls per chick - not taking into account the offset.
+
+```{r prior and data conditional}
+owls.brm2 %>% conditional_effects('FoodTreatment:SexParent') %>% plot()
+```
+
+## Randome intercept and slope model
+
+Formula:
+
+Both FoodTreatment and SexParent occur with the nest block. Could do either or.
+
+```{r slopes formula}
+owls.form <- bf(NCalls ~ FoodTreatment * SexParent +
+                  offset(log(BroodSize)) + (FoodTreatment * SexParent|Nest),
+                family = poisson(link='log'))
+```
+
+First few lines - don't expect anything.
+
+Monitor 3 chains in parallel can detect if one is way off.
+
+```{r fit slopes model, cache = T}
+owls.brm3 <- brm(owls.form,
+                 data = owls,
+                 prior = priors,
+                 iter = 5000,
+                 warmup = 2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 10, 
+                 seed = 123,
+                 control = list(adapt_delta = 0.9)
+                 )
+save(owls.brm3, file = 'owls.brm3.RData')
+```
+
+# Compare models
+
+Random slopes is 206 units better in deviance or 412 in information criteria (-2x deviance).
+
+```{r loo}
+(l.1 <- owls.brm2 %>% loo())
+(l.2 <- owls.brm3 %>% loo())
+loo_compare(l.1 = l.1, l.2)
+```
+
+```{r}
+owls.brm3 %>% get_variables()
+
+owls.brm3 %>% hypothesis('FoodTreatmentSatiated=0', class = 'b') %>% plot()
+```
+
+Can see that priors are not influential for major 'groups' in the model.
+
+```{r cool plots}
+owls.brm3 %>%
+  posterior_samples %>%
+  dplyr::select(-`lp__`) %>%
+  pivot_longer(everything(), names_to = 'key') %>% 
+  filter(!str_detect(key, '^r')) %>%
+  mutate(Type = ifelse(str_detect(key, 'prior'), 'Prior', 'Posterior'),
+         ## Class = ifelse(str_detect(key, 'Intercept'),  'Intercept',
+         ##         ifelse(str_detect(key, 'b'),  'b', 'sigma')),
+         Class = case_when(
+             str_detect(key, '(^b|^prior).*Intercept$') ~ 'Intercept',
+             str_detect(key, 'b_FoodTreatment.*|b_SexParent.*|prior_b') ~ 'TREATMENT',
+             str_detect(key, 'sd') ~ 'sd',
+             str_detect(key, '^cor|prior_cor') ~ 'cor',
+             str_detect(key, 'sigma') ~ 'sigma'),
+         Par = str_replace(key, 'b_', '')) %>%
+  ggplot(aes(x = Type,  y = value, color = Par)) +
+  stat_pointinterval(position = position_dodge(), show.legend = FALSE)+
+  facet_wrap(~Class,  scales = 'free')
+```
+
+# MCMC diagnostics {.tabset .tabset-faded}
+
+If no regex does first 10.
+
+## Trace plots
+
+```{r trace}
+owls.brm3$fit %>% stan_trace()
+```
+
+## Autocorrelation
+
+```{r ac}
+owls.brm3$fit %>% stan_ac()
+```
+
+## Rhat
+
+```{r rhat}
+owls.brm3$fit %>% stan_rhat()
+```
+
+## Efficiency
+
+```{r ess}
+owls.brm3$fit %>% stan_ess()
+```
+
+## Spaghetti
+
+First sign it is not good. Mean is in the middle and Poiss
+
+```{r spaghetti}
+owls.brm3 %>% pp_check(type = 'dens_overlay', ndraws = 100)
+```
+
+# Model validation
+
+QQ does not follow the QQline.
+Overdisperson flagged.
+Residuals - drifting, a lot at top and bottom.
+
+Suspect 0-inflation.
+
+```{r DHARMa}
+preds <- owl.brm3 %>% posterior_predict(nmsaples = 250, summary = FALSE)
+owls.resids <- createDHARMa(simulatedResponse = t(preds),
+                               observedResponse = owls$NCalls,
+                               fittedPredictedResponse = apply(preds, 2, median),
+                               integerResponse = FALSE)
+plot(owls.resids, quantreg = FALSE)
+```
+
+Expect ~50 zeros not 150 zeros. Negative binomial cannot cope with this amount of 0s - go with zero-inflated model.
+
+```{r dispersion}
+owls.resids %>% testDisperson()
+```
+
+# Zero-inflated model
+
+If y is a zero, if true 0 or false 0.
+
+If  = 0 then Bin(p, 1), $\ln \frac{p}{1-p} = \beta_0$
+Otherwise then Pois(lambda)
+
+Two parts to the model:
+1. Rate of false detection of 0. Accounting for 0-inflation and can quantify rate of false 0s.
+2. True 0 goes back into Poisson.
+
+If 0s are genuinely true for hurdle - like no water not going to find fish. Difference process underlying. 
+
+## Add one more prior
+
+dpar - zero inflated
+
+```{r zero prior}
+priors <-  priors +
+  prior(logistic(0,1), class = 'Intercept', dpar = 'zi')
+```
+
+```{r zi model}
+owls.form <- bf(NCalls ~ FoodTreatment * SexParent +
+                  offset(log(BroodSize)) +
+                  (FoodTreatment * SexParent | Nest),
+                zi ~ 1,
+                family = zero_inflated_poisson(link = 'log'))
+```
+
+```{r fit zi model}
+owls.brm4 <- brm(owls.form,
+                 data = owls,
+                 prior = priors,
+                 sample_prior = 'yes',
+                 iter = 5000,
+                 warmup = 2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 5,
+                 seed = 123)
+save(owls.brm4, file = 'owls.brm4.RData')
+```
+
+INLA - assumes you want to fit a particular type of model. Which is great practically. Developers were not R user - alien package. Large because write everything it needs in the package. No external dependencies. Very good for spatial models. Will predict missing values. 
+
+## DHARMA zi 
+
+```{r DHARMa zi}
+preds <- owls.brm4 %>% posterior_predict(nmsaples = 250, summary = FALSE)
+owls.resids <- createDHARMa(simulatedResponse = t(preds),
+                               observedResponse = owls$NCalls,
+                               fittedPredictedResponse = apply(preds, 2, median),
+                               integerResponse = FALSE)
+plot(owls.resids, quantreg = FALSE)
+```
+
+Still overdispered.
+
+```{r zi dispersion}
+owls.resids %>% testDispersion()
+```
+
+But not zero inflated.  So keep the zi model and replace the Poisson with negative binomial.
+
+```{r zi zitest}
+owls.resids %>% testZeroInflation()
+```
+
+Intercept 0.83 logged calls per chick in Deprived Female group which is `r exp(0.84)`. inverse of 0.25, 4x more likely the zeros are true than false
+
+zi_Intercept is on logit scale (Poisson). `r plogis(-1.34)` saying if assume Poission distribution then 20% of zeros must be false because could not get that many zeros from a Poisson distribution. 80% zeros went to the Poisson.
+
+Let's see if rate of false zeros is equal across treatments. False zeros are not evenly distributed across the experiment. Can tackle some statistical problems by accounting for this variance.
+
+```{r zi summary}
+owls.brm4 %>%  summary()
+```
+
+# ZiNB model
+
+## Priors
+
+```{r ziNB priors}
+priors <- prior(normal(1.8,5), class = 'Intercept') +
+  prior(normal(0,2), class = 'b') +
+  prior(cauchy(0,1), class = 'sd') +
+  prior(logistic(0,1), class = 'Intercept', dpar = 'zi') +  # zi B0 prior
+  prior(normal(0,1), class = 'b', dpar = 'zi') + # zi Bi prior logit scale
+  prior(gamma(0.01, 0.01), class = 'shape') # the NB phi shape parameter
+```
+
+`zi ~ FoodTreatment * SexParent` testing whether zero inflation varies between Treatment SexParent.
+
+```{r zinb}
+owls.form <- bf(NCalls ~ FoodTreatment * SexParent +
+                  offset(log(BroodSize)) +
+                  (FoodTreatment * SexParent|Nest),
+                zi ~ FoodTreatment * SexParent,
+                family = zero_inflated_negbinomial(link = 'log'))
+```
+
+```{r ziNB fit}
+owls.brm7 <- brm(owls.form,
+                 data = owls, prior = priors,
+                 sample_prior = 'yes',
+                 iter = 5000,
+                 warmup = 2500,
+                 chains = 3,
+                 cores = 3,
+                 thin = 5)
+```
+
+## DHARMA ziNB
+
+Perhaps still overdispersed.
+
+```{r DHARMa ziNB}
+preds <- owls.brm7 %>% posterior_predict(nmsaples = 250, summary = FALSE)
+owls.resids <- createDHARMa(simulatedResponse = t(preds),
+                               observedResponse = owls$NCalls,
+                               fittedPredictedResponse = apply(preds, 2, median),
+                               integerResponse = FALSE)
+plot(owls.resids)
+```
+
+Can see it's underdispered. Ok, more conservative model. Lesser of 2 evils.
+
+These tests are more stringent that what they are trying to protect against.
+
+```{r ziNB dispersion}
+owls.resids %>% testDispersion()
+```
+
+```{r more dispersion}
+plot(owls.resids)
+```
+
+Could do loo to compare but no point. This is the better model.
+
+Expectations:
+
+- treatment effect
+- no effect of male/female
+- no interaction
+
+Calls per *nest* though no per chick.
+
+```{r conditional plot}
+owls.brm7 %>% 
+  conditional_effects('FoodTreatment:SexParent') #%>% 
+ # plot(points = TRUE, jitter = c(0.25,0))
+```
+
+Average calls per nest
+
+```{r ggemmeans}
+owls.brm7 %>% 
+  ggemmeans(~FoodTreatment*SexParent, offset = log(1)) %>% # offsetting to 1 unit, chick in this case. Shouldn't have to log... but here the log(1) is the accurate number.
+  
+  plot()
+
+off <- owls %>% summarize(Mean = mean(BroodSize))
+as.numeric(off) # ave number of chicks per nest
+```
+
+Population intercept is virtually the same as previous model. We are tinckering with the model. This tinckering won't drastically change the results overall.
+
+zi_intercept `r plogis(-1.59)` probability (16%) of zeros likely to be false in DeprivedFemales group. Logistic is the probability of the true thing.
+
+zi_FoodTreatmentSatiated `r plogis(-1.59 - 0.78)` rate/probability of false 0s in the satiated female group. Fewer false zeros.
+
+zi_SexParentMale  `r plogis(-1.59 - -0.8)` 31% false zeros - more false zeros in this group.
+
+Usually an experimental type thing.
+
+```{r ziNB summary}
+owls.brm7 %>% summary()
+```
+
+## Exceedence probabilities
+
+Gather draws for fixed effects and have a look.
+
+^ - can also mean 'not' with the []
+- could do [^z] or [FS] only F and S
+- ^b_[0-9]{4}, 
+- species code, 4 characters.3characters, ^[a-z]{4}.[a-z]{3}
+
+```{r ziNB regex}
+owls.brm7 %>% get_variables()
+
+owls.draw <-  owls.brm7 %>% 
+  gather_draws(`^b_[Intercept|^b_F.*|^b_S.*[^z].*`, regex = TRUE) # backticks
+owls.draw %>%  head() # log scale
+```
+
+Not much evidence of an interaction. ~0.7. So can consider the main effects.
+
+FoodTreament is about the Females, but because no interaction the effect is the same.
+
+Strong evidence FoodTreatment has an effect.
+
+Any evidence number of calls is different based on SexParent? Some ~0.8 - relates to derpived group. Suspect if no evidence if across whole thing.
 
 
+```{r ziNB exeedence p}
+owls.draw %>% 
+  mutate(Exp = exp(.value)) %>% # odds/factor scale
+  summarize(P1 = sum(Exp > 1)/n(), P2 = sum(Exp < 1)/n())
+```
+
+Magnitude of effects:
+
+Deprived vs Satiated nearly halved. -.47  `r 1/0.459` number of calls doubles.
+
+```{r mag of effect}
+owls.draw %>% 
+  mutate(Exp = exp(.value)) %>% 
+  median_hdci(Exp)
+```
+
+Know on average the effect between FoodTeatment - marginal effect. Effect of one treatment averaging over the other - only emmeans.
+
+Average (male and female) the effect is 2, twice the number of calls for deprived FoodTreatment.
+
+```{r maringal effects}
+owls.brm7 %>% # automatically accounts for offset
+  emmeans(~FoodTreatment, type = 'response') %>% 
+  pairs()
+```
+
+Absolute scale - not working. offset = 1 does not work
+
+```{r abs marginal}
+owls.brm7 %>% # automatically accounts for offset
+  emmeans(~FoodTreatment, offset=-1) %>% 
+  regrid() %>% 
+  pairs()
+```
+
+## R2
+
+```{r ziNB marginal}
+owls.brm7 %>% bayes_R2(re.form = NA, summary = FALSE) %>% 
+  median_hdci
+```
+
+Nests not explaining much.
+
+```{r ziNB nests different}
+owls.brm7 %>% bayes_R2(re.form = ~(1|Nest), summary = FALSE) %>% 
+  median_hdci
+```
+
+Explains about 24% of the variability - there is an effect, but other things account for variability.
+
+```{r ziNB interaction r2}
+owls.brm7 %>% bayes_R2(re.form = ~(FoodTreatment * SexParent|Nest), summary = FALSE) %>%   median_hdci
+```
+
+
+
+# Rstancode
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 ## Amount of Sibling negotiation (vocalizations when parents are absent)
 ## Foot treatment (deprived or satiated

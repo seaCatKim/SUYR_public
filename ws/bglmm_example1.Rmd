@@ -351,11 +351,14 @@ Prior much wider than posterior, don't even have the same center - so good.
 
 This one and also plot fo sd_ s (2 more).
 
+Family sigma plot don't expect it to be too different because data is very likely to follow the distribution well. Looking for the prior and posterior to not be exactly the same. Here, posterior is much 'taller' and prior is wider.
+
 ```{r plot priors and posterior}
 tobacco.brm3 %>% hypothesis('TREATMENTWeak = 0') %>% plot()
 tobacco.brm3 %>% hypothesis('LEAF__Intercept = 0', class = 'sd') %>% plot()
 tobacco.brm3 %>% hypothesis('LEAF__TREATMENTWeak = 0', class = 'sd') %>% plot()
-# tobacco.brm3 %>% hypothesis('sigma', class = 'sigma') %>% plot()
+tobacco.brm3 %>% hypothesis('sigma = 0', class = '') %>% plot() # leave class blank because there is no X_ in the beginning
+
 ```
 
 # MCMC Validation {.tabset .tabset-faded}
