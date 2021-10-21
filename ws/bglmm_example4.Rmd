@@ -60,6 +60,10 @@ library(emmeans)   #for estimating marginal means
 library(MASS)      #for glm.nb
 library(MuMIn)     #for AICc
 library(tidyverse) #for data wrangling
+library(brms)
+library(loo) # should be dependency of another package...
+library(DHARMa)
+library(tidybayes)
 ```
 
 # Scenario
@@ -73,6 +77,19 @@ mckeon = read_csv('../data/mckeon.csv', trim_ws=TRUE)
 glimpse(mckeon)
 ```
 
+Block - tank number - needs to be a factor
+Predation - 0/1, yes/no
+Symbiont - treatment, none, one, both - needs to be factor, reorder 
+
+```{r factorize}
+mckeon <- mckeon %>% 
+  mutate(BLOCK = factor(BLOCK),
+         SYMBIONT = factor(SYMBIONT, levels = c('none', 'crabs', 'shrimp', 'both'
+                                                )))
+
+levels(mckeon$SYMBIONT)
+```
+
 
 # Exploratory data analysis
 
@@ -82,11 +99,385 @@ y_i \sim{} \mathcal{N}(n, p_i)\\
 ln\left(\frac{p_i}{1-p_1}\right) =\boldsymbol{\beta} \bf{X_i} + \boldsymbol{\gamma} \bf{Z_i}
 $$
 
-where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively 
-and $\bf{X}$ is the model matrix representing the overall intercept and effects of symbionts on the probability of the colony experiencing predation.
+where $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are vectors of the fixed and random effects parameters respectively and $\bf{X}$ is the model matrix representing the overall intercept and effects of symbionts on the probability of the colony experiencing predation.
 $\bf{Z}$ represents a cell means model matrix for the random intercepts associated with individual coral colonies.
 
-# Fit the model
+$\beta_0$ average predation in none group
+3 other $\beta$s 
+$\gamma$ difference back to the intercept
+
+# Informative priors model
+
+Try out very informative priors:
+
+Very precise intercept - very sure that my intercept is 0.5 (middle of 0-1, 0 on logit scale)
+
+We think treatments (crabs, shrimp, both) have a positive impact at the same rate (all the same rate, one prior for all). With very low variance.
+
+```{r tight priors}
+priors1 <- prior(normal(0, 0.001), class = 'Intercept') + 
+  prior(normal(3, 0.001), class = 'b') +
+  prior(cauchy(0, .1), class = 'sd')
+```
+
+```{r intercept formula}
+mckeon.form <- bf(PREDATION | trials(1) ~ SYMBIONT + (1|BLOCK),
+                  family = binomial(link = 'logit'))
+```
+
+```{r fit intercept model}
+mckeon.brm2b <- brm(mckeon.form,
+                   data = mckeon,
+                   prior = priors1,
+                   sample_prior = 'only',
+                   iter = 5000,
+                   warmup = 1000,
+                   chains = 3, 
+                   thin = 5)
+```
+
+```{r tight prior plot}
+mckeon.brm2b %>% conditional_effects() %>% plot()
+```
+
+Priors for $\beta$s alwasy normal - central limit theorem.
+
+$\beta_0$ log of 0.5 - 0
+
+Cauchy is a type of t distribution with 1 degree of freedom - a flat normal distribution.
+
+No sigma - not in distribution.
+
+Everything on logit scale so small numbers are quite wide distributions.
+
+Safer to go wider for priors up to a point - get stuck.
+
+$$
+\beta_0 \sim \mathcal{N}(0, 2\\
+\beta_i \sim \mathcal{N}(0, 5)\\
+\sigma^2 \sim \mathcal{Cauchy}(0, 2)\\
+$$
+
+```{r set priors}
+priors <- prior(normal(0, 2), class = 'Intercept') +
+  prior(normal(0, 5), class = 'b') +
+  prior(cauchy(0, 1), class = 'sd')
+```
+
+# Fit model {.tabset .tabset-faded}
+
+## Random intercepts model
+
+Regular binomial is number of successes to number of trials - `PREDATION | trials(1)`. Special case (Bernoulli), one trial at a time so `trails(1)`. If was always out of ten could put the variable (total whatever variable name) or 10 there `trials(Total)` or `trials(10)`.
+
+```{r fit intercept model, cache = TRUE}
+mckeon.brm2 <- brm(mckeon.form,
+                   data = mckeon,
+                   prior = priors,
+                   sample_prior = 'only',
+                   iter = 5000,
+                   warmup = 1000,
+                   chains = 3, 
+                   thin = 5)
+```
+
+Check priors. Can only predict between 0-1 so priors allow for anything.
+
+```{r check priors}
+mckeon.brm2 %>% conditional_effects() %>% plot()
+```
+
+## Random slopes and intercept
+
+```{r intercept and slope formula}
+mckeon.form <- bf(PREDATION | trials(1) ~ SYMBIONT + (SYMBIONT|BLOCK),
+                  family = binomial(link = 'logit')
+                )
+```
+
+For reproducibility would `set.seed()` directly before the model to get the same results. `brm()` can set in the model.
+
+```{r fit intercept slope model}
+mckeon.brm3 <- brm(mckeon.form,
+                   data = mckeon,
+                   prior = priors,
+                   sample_prior = 'yes',
+                   iter = 5000,
+                   warmup = 1000,
+                   chains = 3, 
+                   thin = 5,
+                   control = list(adapt_delta = 0.9))
+```
+
+Taking a while... Efficiency is probably low.
+Despite using `adapt_delta` still has divergent transitions. Would make gamma sigma prior more narrow (not betas).
+
+```{r notes}
+plogis(-2.5)
+plogis(-20000.5)
+
+# trying to not back transform and keep on link scale but not working
+mckeon.brm3 %>% conditional_effects(transform = I, method = 'posterior_predict')
+
+# murray's preferred
+mckeon.brm3 %>% ggemmeans(~ SYMBIONT) %>% plot()
+mckeon.brm3 %>% ggemmeans(~ SYMBIONT, exponentiate = FALSE) %>% plot()
+mckeon.brm3 %>% ggpredict(~ SYMBIONT, back.transform = FALSE) %>% plot()
+
+# could calc yourself then plot
+mckeon.brm3 %>% emmeans(~SYMBIONT, type = 'link')  # link scale
+mckeon.brm2 %>% emmeans(~SYMBIONT, type = 'link') # link scale
+```
+
+```{r conditional with random slopes}
+mckeon.brm3 %>% conditional_effects() %>% plot()
+```
+
+## Compare models
+
+Random slopes model is better.
+
+```{r loos}
+(l.1 <- mckeon.brm2 %>% loo())
+(l.2 <- mckeon.brm3 %>% loo())
+loo_compare(l.1 = l.1, l.2)
+```
+
+intercept at none
+difference crab, shrimp, both compared to none
+variance of crabs, shrimp, and both
+
+```{r get variables}
+mckeon.brm3 %>% get_variables()
+```
+
+Could be wider. Would not want it to get tighter than that. would indicate would not priors more narrow than this.
+
+```{r plot shrimp}
+mckeon.brm3 %>% hypothesis('SYMBIONTshrimp = 0', class = 'b') %>% plot()
+```
+
+```{r plot crab}
+mckeon.brm3 %>% hypothesis('SYMBIONTcrabs = 0', class = 'b') %>% plot()
+```
+# MCMC validation {.tabset .tabset-faded}
+
+## Trace plots
+
+BLOCK_SYMBIONTcrabs problematic. BLOCK_SYMBIONTs plots are centered around 0, but crab one has some values that are way out there. 
+
+Again tells us that the Cauchy (0, 2) is too wide - unlikely that the variability would be 5000. Does not make logical sense. Tightening cauchy should address, run faster, less divergent transitions etc. something like Cauchy(0, 1).
+
+```{r tract}
+mckeon.brm3$fit %>% stan_trace()
+```
+
+## Autocorrlation
+
+Would expect step length might be too big. Some may be 0.2. 
+
+Could up the thinning, but narrowing the Cauchy might also address without changing the thinning.
+
+```{r ac}
+mckeon.brm3$fit %>% stan_ac()
+```
+
+## Rhat
+
+Not too bad - chains were equally bad/good for all.
+
+```{r rhat}
+mckeon.brm3$fit %>% stan_rhat()
+```
+
+## Efficiency
+
+Low efficiency - throwing out a lot of samples.
+```{r ess}
+mckeon.brm3$fit %>% stan_ess()
+```
+
+All the MCMC validation is about the variance - Cauchy - for random effects. Know from above that Bi is almost too narrow.
+
+Should narrow Cauch and rerun.
+
+## Spaghetti
+
+No useful for binomial.
+
+```{r}
+mckeon.brm3 %>% pp_check(type = 'dens_overlay', nsamples = 100)
+```
+
+# Model validation
+
+DHARMa residuals.
+
+Despite all the issues above, the model is a good fit. Impact was minimal.
+
+```{r DHARMa}
+preds <- mckeon.brm3 %>% posterior_predict(nmsaples = 250, summary = FALSE)
+mckeon.resids <- createDHARMa(simulatedResponse = t(preds),
+                               observedResponse = mckeon$PREDATION,
+                               fittedPredictedResponse = apply(preds, 2, median),
+                               integerResponse = FALSE)
+plot(mckeon.resids, quantreg = FALSE)
+```
+
+# Conditional plots
+
+Expectations:
+
+- none group high probability of predated on
+- less in crab, shrimps, both, but substantial amount of variability
+
+```{r conditional plots}
+mckeon.brm3 %>% 
+  conditional_effects() %>% 
+  plot(points = TRUE)
+```
+
+# Model investigation
+
+Population level effects: logit
+
+- Intercept 3 `r plogis(3.1)` 
+    - probability of predation with no symbionts is about 96%
+    - odds ratio `r exp(3.1)` x more likely to be predated on than not
+- Predation probability declined by `r exp(-1.5)`
+    - probability of `r plogis(3.1 - 1.5)` predation
+    - odds of being predated by the crab is 4x `r .8 / (1-.8)`
+
+```{r summary}
+mckeon.brm3 %>% summary()
+```
+
+# Additional analyses {.tabset .tabset-faded}
+
+Which scale - link-scale, odds, abs change in probability
+
+Data are on 0-1 scale, use logit transform back to 0-1 scale.
+
+Binomial - logit scale 
+
+link - logit - log odds ratio - scale $\log{\frac{p_i}{1-p_1}}$
+exp to:
+odds ratio - fold-scale - $\frac{p_i}{1-p_1}$
+probability - p
+
+  - for when talking about a mean of something
+  
+`plogis()` goes straight from link to probability
+  
+Difference cannot turn into p.
+
+## Tukey's pairwise
+
+Link scale
+
+could exponentiate to get it into odds ratio.
+
+```{r link emmeans}
+mckeon.brm3 %>%  emmeans(~SYMBIONT, type = 'link') %>% pairs()
+
+exp(1.86) # odds changing 6.4
+1/exp(1.86) # makes sense
+plogis(1.86) # goes from link to probability does not make sense
+```
+
+Want odds ratio scale:
+
+- Odds of predation in none group is 6x higher than crab group.
+    - 16x higher than shrimp group
+    - 51x higher than both group
+- Odds 2x higher in crabs than shrimp
+etc.
+
+```{r odds emeans}
+mckeon.brm3 %>% 
+  emmeans(~SYMBIONT, type = 'response') %>% # odd ratio
+  pairs()
+```
+
+```{r regrid odds scale}
+mckeon.brm3 %>% 
+  emmeans(~SYMBIONT) %>% # odd ratio
+  pairs() %>% 
+  regrid() # regrid after it's done the pairs, does what's sensible though, here keeps it on odds ratio because difference in probability does not make sense
+```
+
+Probability of decline from none - shrimp is 0.143 probability. Not that useful.
+
+```{r probability}
+mckeon.brm3 %>% 
+  emmeans(~SYMBIONT, type = 'link') %>% # odd ratio
+  regrid() %>%  # transform to probability
+  pairs() # comparing those probabilities
+```
+
+## Calculate probabilities
+
+```{r gather draws}
+mckeon.brm3 %>% 
+  emmeans(~SYMBIONT, type = 'link') %>% 
+  pairs %>% 
+  regrid %>% 
+  gather_emmeans_draws() -> mckeon.em
+head(mckeon.em)
+```
+
+Any evidence that crabs give us some protection. No evidence p = 0.72. Probability that predation is higher in the none group is 70% - want > 80%
+
+Some evidence for shrimp and both. No reference to how much protection (size of effect). Just evidence of an effect.
+
+No evidence difference for crab and shrimp. Both seems better than just crabs.
+
+```{r p-value}
+mckeon.em %>% summarize(P = sum(.value > 1)/n()) # fold scale is 1, 1x is the same
+```
+
+## Planned comparisons
+
+Novel comparisons:
+
+1. Crab or shrimp.
+2. Either crab or shrimp compared to both
+2. No symbionts to average of 3 symbiont groups.
+
+```{r contrast matrix}
+cmat <- cbind(crab_v_shrimp = c(0,1,-1,0),
+              one_v_both = c(0, 1/2, 1/2, -1),
+              symbiont = c(1, -1/3, -1/3, -1/3))
+cmat
+```
+
+Odds of predation on crabs is 2.5x higher than shrimp.
+
+Odds of predation on one (ave of crabs of shrimp) is 5.8x higher than both.
+
+Any symbiont has 14x more protection than none.
+
+```{r contrasts}
+mckeon.em <- mckeon.brm3 %>% 
+  emmeans(~SYMBIONT, type = 'link') %>% 
+  contrast(method = list(cmat)) %>% 
+  gather_emmeans_draws() %>% # will always use the link
+  mutate(Fit = exp(.value)) # odds ratio, could put regrid but mutate keeps .value and Fit
+mckeon.em %>% median_hdci(Fit)
+```
+
+Some evidence that both symbionts offers more protection than one.
+
+Strong evidence any any symbiont offers more protection than no symbiont.
+
+No evidence at all whether it's a crab or a shrimp.
+
+```{r sym probabilities}
+mckeon.em %>% summarize(P = sum(Fit > 1)/ n())
+```
+
+
+# Rstan code
 
 ```{r fitModel, results='markdown', eval=FALSE, hidden=TRUE}
 mckeon = mckeon %>% mutate(BLOCK=factor(BLOCK),
@@ -344,12 +735,6 @@ ggplot(newdata, aes(y=prob, x=SYMBIONT)) +
     geom_pointrange(aes(ymin=lower.HPD, ymax=upper.HPD))
 
 ```
-# Model validation
-
-# Model investigation / hypothesis testing
-
-# Predictions
-
-# Summary figures
 
 # References
+ 
