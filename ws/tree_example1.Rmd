@@ -53,9 +53,9 @@ Load the necessary libraries
 
 ```{r libraries, results='markdown', eval=TRUE}
 library(gbm)         #for gradient boosted models
-library(car)
+library(car) # often behind the scenes
 library(dismo)
-library(pdp)
+library(pdp) # partial dependency plots of regression tree outputs etc.
 library(ggfortify)
 library(randomForest)
 library(tidyverse)
@@ -72,9 +72,16 @@ range of environmental factors.  Traditionally, abalone are aged
 by counting thier growth rings, however, this method is very
 laborious and expensive.  Hence a study was conducted in which abalone
 growth ring counts were matched up with a range of other more easily
-measured physical characteristics (such as shell dimesions and weights)
+measured physical characteristics (such as shell dimensions and weights)
 in order to see if any of these other parameters could be used as
 proxies for the number of growth rings (or age).
+
+Predictors highly correlated - height, diameter, etc. - so can't pick out the most influential variable.
+
+How important is shell weight versus shell length? 
+
+- Regression trees - One win one lose for regression trees. Most correlated to response will 'win' and other will be deemed less important. More important one is more likely to be causal (to response) and other variable most likely correlated to more important variable. Correlation does not matter for prediction.
+- Random Forest trees - will average and will come out less than other variables. Subsets predictors each time it runs versus subsetting data (rows).
 
 ![abalone](../resources/abalone.jpg){width="251" height="290"}
 
@@ -95,18 +102,237 @@ abalone = abalone %>% mutate(SEX=factor(SEX))
 
 # Exploratory data analysis
 
+For these don't need to define a response - the left of the ~. Tecnically RINGS/AGE is the response. In paper used RINGS.
+
+Some correlation. Some relationships aren't linear. Does it matter? **NO**, not for trees.
+
+Good idea before fitting a tree to have an idea of relationships are positive, negative, or other (up and down).
+
+Let's say HEIGHT was parabolic. Need to tell the trees whether to constrain relationships as positive, negative, or wander anywhere. Trees are sensitive - can pick up artefacts of the data and make wiggly lines. Can specify a **monotonic** relationship. Will not constrain HEIGHT as an example.
+
+SEX - 0
+LENGTH - 1
+DIAMETER- 1
+HEIGHT - 0
+WHOLE WEIGHT - 1
+MEANT WEIGHT - 1
+GUT WEIGHT - 1
+SHELL WEIGHT - 1
+
+```{r scatterplot}
+car::scatterplotMatrix(~RINGS + SEX + LENGTH + DIAMETER + HEIGHT + WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT, data = abalone)
+```
+
+In order to get accuracy (for the paper) - will need to subsample to compare against. Don't need to subsample to cut the tree.
+
+Will subsample 100 random. Wouldn't go below 10%. How?
+
+Number each row and choose 100 random numbers out of 4177.
+
+```{r subsample random 100}
+set.seed(123)
+nrow(abalone)
+i <-  sample(1:nrow(abalone), 100, replace = FALSE)
+i # these rows for accuracy
+abalone.train <- abalone[-i,] # all BUT these rows for training
+abalone.test <- abalone[i,]
+```
 
 # Fit the model
 
+Adhering to R's general way of formula. No notion of additive v multiplicative. All multiplicative models - will have the interaction between all 8 predictors built-in.
+
+Need to specify a loss function but do it similar to family although it has nothing to do with families/poisson.
+
+Specify relationships with `var.monotone`: 1 - position, 0 - none, -1 - negative.
+Specify number of trees, 10k - 100k. More complex models may need more but start somewhere.
+`interaction.depth` - how big is each little individual tree. Fitting lots of little trees in long sequence. Number of splits. How complex do we expect the interactions to be? Here, could be up to 5 interactions. Wouldn't go beyond 5-7 here, can get wonky.
+`bag.fraction` - proportion of random data subsetting for each tree. Every tree randomly selects 50%.
+`shrinkage` - learning rate. 0.01% of the pattern. Smaller the number the less it's learning. Typical numbers are 0.01 and 0.001. Related to number of trees. Learning slower will need more trees to learn. If learning too quickly can decrease.
+`train.fraction` - 1, not doing here have subset accuracy dataset.
+`cv` - cross validation
+
+'n.minobsinnode` is number of observations per node (default 10). Could decrease for small dataset.
+
+library caret can have 'wrapper' functions to loop through trees running every combination of parameters and help determine parameters for a tree. Can do it yourself quicker.
+
+Hopefully, don't need all 10,000 ideally want 1,000.
+
+```{r fit tree}
+abalone.gbm <- gbm(RINGS ~ SEX + LENGTH + DIAMETER + HEIGHT + WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT,
+                   data = abalone.train,
+                   distribution = 'poisson',
+                   var.monotone = c(0,1,1,0,1,1,1,1),
+                   n.trees = 10000, 
+                   interaction.depth = 5,
+                   bag.fraction = 0.5,
+                   shrinkage = 0.01,
+                   train.fraction = 1, # not default
+                   cv.folds = 3
+                   )
+```
+
+Determine best number of iterations.
+
+Gives number and graph.
+
+Number - Says optimum number of trees is 263 - not enough. Tells us it's learned too quickly. Goal of boosted trees is to make them learn slowly.
+Graph - can see where optimum number is relative to maximum. Here, had plenty of opportunity to use more trees.
+
+Cross-validation - higher, but still need slower learning.
+
+```{r best iteration OOB}
+(best.iter <- gbm.perf(abalone.gbm, method = 'OOB')) # OOB out of bag method
+(best.iter <- gbm.perf(abalone.gbm, method = 'cv'))
+```
+
+Sometimes cross-validation `cv = ` in the does not work for no discernable reason.
+
+```{r slower learning tree}
+abalone.gbm <- gbm(RINGS ~ SEX + LENGTH + DIAMETER + HEIGHT + WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT,
+                   data = abalone.train,
+                   distribution = 'poisson',
+                   var.monotone = c(0,1,1,0,1,1,1,1),
+                   n.trees = 10000, 
+                   interaction.depth = 5,
+                   bag.fraction = 0.5,
+                   shrinkage = 0.001,
+                   train.fraction = 1, # not default
+                   cv.folds = 3
+                   )
+
+#gbm:::update # none ::: looking for function in package, wrapper function
+#brms:::update # lots of option
+
+(best.iter <- gbm.perf(abalone.gbm, method = 'OOB')) 
+(best.iter <- gbm.perf(abalone.gbm, method = 'cv'))
+```
+
+Now we want to use best.iter 4648 as the stopping point for predictions etc.
+
+If best iterations was 9500, would increase number of trees so make sure have run sufficient number of trees.
 
 # Explore relative influence
+
+SHELL_WEIGHT deemed way more influential - 'won' a lot of these split when competing with SHELL_WEIGHT. If interested in other predictors likely correlated with SHELL_WEIGHT could run again without SHELL_WEIGHT.
+
+```{r summary}
+summary(abalone.gbm, n.trees = best.iter) # without n.trees would use 10k trees and be overfitted
+```
 
 
 # Explore partial effects
 
+Although no actual family (not a likelihood distribution), link function still applies in the loss function. Still do a back transform but more limited.
+
+Constrained SHELLWEIGHT to positive monotonic. Can flatten out.
+
+```{r partials}
+abalone.gbm %>% 
+  pdp::partial(pred.var = 'SHELL_WEIGHT', # nominate var to explor
+               n.trees = best.iter, # number of trees
+               recursive = FALSE, # TRUE will be on link scale
+               inv.link = exp) %>%  # told link function
+  autoplot()
+```
+
+Loop through to make partial plots for all variables:
+
+1. Make a list of variables using `abalone.gbm$Terms`.
+2. Store in a list.
+
+```{r store var names}
+nms <- attr(abalone.gbm$Terms, 'term.labels')
+nms
+```
+
+R allocated a block of memory to c(1,2,3), so adds other block to store c(c(1,2,3),6). *Expensive memory wise.*
+
+Need to create list with number of slots. Avoid memory issues in middle of analysis. Good practice.
+
+```{r create list}
+c(1,2,3)
+c(c(1,2,3),6) 
+
+p <- vector('list', length(nms)) # R knows upfront how much memory to allocate
+names(p) <- nms # rename list items with variable names
+```
+
+'nm' is the iterator.
+[[]] refers to items in a list.
+Need to know the rage of partial plots to put all plots on the same y-axis.
+
+`wrap_plots` takes a list of plots.
+
+If we had a categorical *response* would have put `type = 'classification...'`
+
+```{r for loop}
+for(nm in nms) {
+  print(nm) # purpose of progress, will print value of nm to see where up to
+  p[[nm]] <- abalone.gbm %>%  pdp::partial(pred.var = nm,
+                                           n.trees = best.iter,
+                                           inv.link = exp,
+                                           recursive = FALSE,
+                                           type = 'regression') %>% 
+    autoplot() + ylim(0, 20)
+}
+
+patchwork::wrap_plots(p)
+```
+
+Partial plot of interactions
+
+```{r interaction plot}
+abalone.gbm %>% pdp::partial(pred.var = c('SHELL_WEIGHT', 'HEIGHT'),
+                             n.trees = best.iter,
+                             recursive = TRUE) %>% 
+  autoplot()
+```
+
+1 is strong interaction starts at 0 - very weak interaction between SHELL_HEIGHT and SHELL_WEIGHT.
+
+Worth exploring this interaction in a linear model? etc.
+```{r interaction strength}
+nms
+interact.gbm(abalone.gbm, abalone, c(4,8), # variable position
+             n.tree = best.iter)
+```
+
+# Predictions
+
+Predict the number of rings based on the frist row of abalone.test.
+
+Predicted 8.7 rings which is close to actual value of 8.
+
+```{r predict}
+abalone.test[1,]
+predict(abalone.gbm, n.trees = best.iter, 
+        newdata = abalone.test[1,]) # playing with
+exp(2.1704) # predict is on link scale
+```
+
+Simulate missing value.
+
+To predict just travels down the tree. What if variable missing is at the split? Goes down both 'routes' and averages at the end.
+
+Do not have to supply all of the data.
+
+Only way to add CI is to bootstrap - tun the tree lots and lots of times, 100 minimum, 1000 would be better. Best to write own loop - say how many to run, create vector of lists, each time before running tree need it to get a random set of data with duplications. ggbrt package does bootstrap.
+
+```{r missing value}
+test <-  abalone.test[1,]
+test[4] <- NA
+test
+
+predict(abalone.gbm, n.trees = best.iter, 
+        newdata = test)
+exp(predict(abalone.gbm, n.trees = best.iter, 
+        newdata = test))
+```
 
 # Explore accuracy
 
+Do the above predict but for whole test set. Can compare train vs test, calculate precent similarity, etc. Code available in folder.
 
 # Explore interactions {.tabset .tabset-faded}
 
@@ -115,12 +341,31 @@ abalone = abalone %>% mutate(SEX=factor(SEX))
 
 
 # Random Forest
+
 ```{r randomForest, results='markdown', eval=TRUE, hidden=TRUE}
 library(randomForest)
 abalone.rf = randomForest(RINGS ~ SEX + LENGTH + DIAMETER + HEIGHT +
                       WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT,
                       data=abalone, importance=TRUE,
                       ntree=1000)
+```
+
+Calculates based on impurity/pure - take this one out is my prediction less pure/accurate?
+
+Take an important variable out, decreases accuracy, would be more impure.
+Have more sharing of importance vs winners/losers. Correlated important  predictors are less important than a lone important variable.
+
+Choose which tree based on how want to treat correlation. Some people run both.
+
+- boosted trees better at prediction, finding important variables
+
+General guide - 30 observations per predictor. 10 predictors at least 30 observations.
+
+SHELL_WEIGHT is still the most important but less 
+
+Thing that is most correlated is most likely to be the driver - parsimony.
+
+```{r rf importance}
 abalone.imp = randomForest::importance(abalone.rf)
 ## Rank by either:
 ## *MSE (mean decrease in accuracy)
@@ -130,7 +375,12 @@ abalone.imp = randomForest::importance(abalone.rf)
 ## *NodePurity (mean decrease in node impurity)
 ## Measure of the total decline of impurity due to each
 ## predictor averaged over trees
-100*abalone.imp/sum(abalone.imp)
+100*abalone.imp/sum(abalone.imp) # ask to present as a proportion
+# IncNodePurity is in percent
+1/8 # cut of importance, > 12.5%
+```
+
+```{r rf plots}
 varImpPlot(abalone.rf)
 ## use brute force
 abalone.rf %>% pdp::partial('SHELL_WEIGHT') %>% autoplot
