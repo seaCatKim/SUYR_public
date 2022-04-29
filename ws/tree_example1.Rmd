@@ -144,12 +144,20 @@ Adhering to R's general way of formula. No notion of additive v multiplicative. 
 
 Need to specify a loss function but do it similar to family although it has nothing to do with families/poisson.
 
-Specify relationships with `var.monotone`: 1 - position, 0 - none, -1 - negative.
+Specify relationships with `var.monotone`: 1 - positive/increasing, 0 - none/arbitrary, -1 - negative/decreasing.
+
 Specify number of trees, 10k - 100k. More complex models may need more but start somewhere.
-`interaction.depth` - how big is each little individual tree. Fitting lots of little trees in long sequence. Number of splits. How complex do we expect the interactions to be? Here, could be up to 5 interactions. Wouldn't go beyond 5-7 here, can get wonky.
+
+`interaction.depth` - how big is each little individual tree. Fitting lots of little trees in long sequence.
+
+Number of splits. How complex do we expect the interactions to be? Here, could be up to 5 interactions. Wouldn't go beyond 5-7 here, can get wonky.
+
 `bag.fraction` - proportion of random data subsetting for each tree. Every tree randomly selects 50%.
+
 `shrinkage` - learning rate. 0.01% of the pattern. Smaller the number the less it's learning. Typical numbers are 0.01 and 0.001. Related to number of trees. Learning slower will need more trees to learn. If learning too quickly can decrease.
+
 `train.fraction` - 1, not doing here have subset accuracy dataset.
+
 `cv` - cross validation
 
 'n.minobsinnode` is number of observations per node (default 10). Could decrease for small dataset.
@@ -186,7 +194,7 @@ Cross-validation - higher, but still need slower learning.
 (best.iter <- gbm.perf(abalone.gbm, method = 'cv'))
 ```
 
-Sometimes cross-validation `cv = ` in the does not work for no discernable reason.
+Sometimes cross-validation `cv = ` in the does not work for no discernible reason.
 
 ```{r slower learning tree}
 abalone.gbm <- gbm(RINGS ~ SEX + LENGTH + DIAMETER + HEIGHT + WHOLE_WEIGHT + MEAT_WEIGHT + GUT_WEIGHT + SHELL_WEIGHT,
@@ -300,7 +308,7 @@ interact.gbm(abalone.gbm, abalone, c(4,8), # variable position
 
 # Predictions
 
-Predict the number of rings based on the frist row of abalone.test.
+Predict the number of rings based on the first row of abalone.test.
 
 Predicted 8.7 rings which is close to actual value of 8.
 
